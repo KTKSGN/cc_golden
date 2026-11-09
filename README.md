@@ -8,6 +8,57 @@
 
 Подробно: устройство, решения, проверка, частые проблемы — в [`docs/PROJECT.md`](docs/PROJECT.md).
 
+## Установка копипастой (один блок)
+
+На свежем Debian 13 под своим пользователем вставьте блок **целиком**. Он создаёт `~/deploy.sh` и сразу его запускает: ставит `curl`, если его нет, скачивает `bootstrap.sh`, сверяет контрольную сумму и запускает установку. Ответы на вопросы установщика берутся с клавиатуры (`</dev/tty`), а не из вставленного текста. Без `sudo` (при установке Debian задан пароль root) войдите `su -` и вставьте тот же блок. Тот же скрипт лежит отдельным файлом: [`deploy.sh`](deploy.sh).
+
+<!-- deploy-block:begin -->
+```bash
+cat > ~/deploy.sh <<'EOF'
+#!/usr/bin/env bash
+# Разворачивает эталон cc_golden на свежем Debian 13. Строку SHA= вписывает infra/build.sh.
+# Запуск: bash ~/deploy.sh   (под своим пользователем с sudo, или под root после «su -»)
+set -euo pipefail
+
+URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
+SHA=007cd4e491652f9b6c2835b700400bb1117841aec549597f19ae80d760269086
+
+if [ "$(id -un)" = claude ]; then
+  echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1
+fi
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=""
+elif command -v sudo >/dev/null; then
+  SUDO=sudo
+else
+  echo "sudo нет (при установке Debian задан пароль root). Войдите командой «su -» (с дефисом) и запустите: bash $0"; exit 1
+fi
+
+DIR="$HOME/cc_golden"
+if ! command -v curl >/dev/null; then
+  echo "== Ставлю curl"
+  $SUDO apt-get update
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y curl
+fi
+
+echo "== Скачиваю bootstrap.sh в $DIR"
+mkdir -p "$DIR"
+curl -fsSL -o "$DIR/bootstrap.sh" "$URL"
+
+got="$(sha256sum "$DIR/bootstrap.sh" | cut -d' ' -f1)"
+if [ "$got" != "$SHA" ]; then
+  echo "Контрольная сумма НЕ совпала: $got"
+  echo "Ожидалась:                   $SHA"
+  echo "Установку не запускаю. Если эталон обновлялся, возьмите новую сумму и поправьте строку SHA= в этом скрипте."
+  exit 1
+fi
+echo "== Контрольная сумма совпала, запускаю установку"
+$SUDO bash "$DIR/bootstrap.sh"
+EOF
+bash ~/deploy.sh </dev/tty
+```
+<!-- deploy-block:end -->
+
 ## Установка и обновление
 
 ```
