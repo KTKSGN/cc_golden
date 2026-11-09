@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Start (or reattach to) a Claude Code Remote Control session inside tmux.
+# Usage: claude-rc [session-name] [workdir]
+set -euo pipefail
+
+name="${1:-claude}"
+workdir="${2:-$HOME/github}"
+rc_name="claude-$(uname -n | cut -d. -f1)"
+
+if ! tmux has-session -t "$name" 2>/dev/null; then
+  tmux new-session -d -s "$name" -c "$workdir" "claude --remote-control '$rc_name'; exec bash"
+fi
+
+if [ -n "${TMUX:-}" ]; then
+  tmux switch-client -t "$name"
+else
+  tmux attach -t "$name"
+fi

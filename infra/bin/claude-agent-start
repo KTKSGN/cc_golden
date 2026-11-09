@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Start the Remote Control session, resuming the latest real conversation.
+# Called by claude-agent.service inside tmux.
+# Usage: claude-agent-start [--new] [--dry-run]
+#   --new      start a fresh conversation instead of resuming
+#   --dry-run  only print the command that would run
+set -euo pipefail
+
+# Remote Control session name: one per VM, so several VMs differ in the app
+name="claude-$(uname -n | cut -d. -f1)"
+workdir="$HOME/github"
+# Transcripts live in ~/.claude/projects/<workdir with / replaced by ->
+projdir="$HOME/.claude/projects/${workdir//\//-}"
+
+new=0 dry=0
+for arg in "$@"; do
+  case "$arg" in
+    --new) new=1 ;;
+    --dry-run) dry=1 ;;
+    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+# Newest transcript with at least one user message. Remote Control leaves
+# empty stub sessions on every start, so plain --continue may pick a stub.
+sid=""
+if [ "$new" -eq 0 ] && [ -d "$projdir" ]; then
+  while IFS= read -r f; do
+    if grep -q '"type":"user"' "$f"; then
+      sid="$(basename "$f" .jsonl)"
+      break
+    fi
+  done < <(ls -t "$projdir"/*.jsonl 2>/dev/null)
+fi
+
+cmd=(claude --remote-control "$name")
+[ -n "$sid" ] && cmd+=(--resume "$sid")
+
+if [ "$dry" -eq 1 ]; then
+  printf '%q ' "${cmd[@]}"; echo
+  exit 0
+fi
+
+cd "$workdir"
+exec "${cmd[@]}"

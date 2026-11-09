@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# Подключает приватный репозиторий памяти в ~/github/memory. Запускать от claude.
+#
+#   claude-connect-memory git@github.com:ВЛАДЕЛЕЦ/РЕПО.git [--key ~/.ssh/КЛЮЧ]
+#
+# Для адреса GitHub: ключ (по умолчанию новый ~/.ssh/github_memory), ssh-алиас
+# github-memory, проверка отпечатка github.com, ожидание, пока владелец добавит
+# ключ в репозиторий как deploy key с правом записи. Потом клон, шаблоны для
+# пустого репозитория, папка hosts/<имя VM>/, коммит и пуш.
+# Повторный запуск безопасен: что уже есть, не трогает.
+set -Eeuo pipefail
+trap 'printf "\nОШИБКА: прервано, строка %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
+
+WORKDIR="$HOME/github"
+MEM="$WORKDIR/memory"
+TEMPLATES="$WORKDIR/infra/templates"
+HOST="$(uname -n | cut -d. -f1)"
+ALIAS=github-memory
+# Официальный отпечаток github.com (docs.github.com, «GitHub's SSH key fingerprints»)
+GITHUB_ED25519_FPR='SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU'
+
+run() { printf '+ '; printf '%q ' "$@"; printf '\n'; "$@"; }
+note() { printf '    %s\n' "$*"; }
+die() { printf '\nОШИБКА: %s\n' "$*" >&2; exit 1; }
+
+ask() {  # ask "вопрос" -> REPLY; конец ввода — ошибка
+  printf '%s ' "$1" >&2
+  IFS= read -r REPLY || die "ввод прерван"
+}
+
+url="" key="$HOME/.ssh/github_memory"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --key) key="${2:?после --key нужен путь к ключу}"; shift 2 ;;
+    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "неизвестный аргумент: $1" ;;
+    *) [ -z "$url" ] || die "лишний аргумент: $1"; url=$1; shift ;;
+  esac
+done
+[ -n "$url" ] || die "укажите адрес репозитория: claude-connect-memory git@github.com:ВЛАДЕЛЕЦ/РЕПО.git"
+[ "$(id -un)" = claude ] || die "запускайте от claude: sudo -u claude -i claude-connect-memory …"
+[ -d "$TEMPLATES" ] || die "нет $TEMPLATES: эталон не установлен (sudo bash bootstrap.sh)"
+
+printf '==> Память для VM %s: %s\n' "$HOST" "$url"
+
+# --- git identity ------------------------------------------------------------
+for k in user.name user.email; do
+  if [ -z "$(git config --global --get "$k" || true)" ]; then
+    while true; do
+      if [ "$k" = user.name ]; then
+        ask "Имя для git-коммитов агента (например «Claude ($HOST)»):"
+        [ -n "$REPLY" ] && break
+      else
+        ask "Email для git-коммитов агента (например claude@$HOST.local):"
+        [[ $REPLY =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] && break
+      fi
+      note "значение не подходит, ещё раз"
+    done
+    run git config --global "$k" "$REPLY"
+  else
+    note "git $k: $(git config --global --get "$k")"
+  fi
+done
+
+# --- доступ по SSH (только для GitHub) ---------------------------------------
+clone_url=$url
+if [[ $url =~ ^git@github\.com:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)$ ]]; then
+  slug=${BASH_REMATCH[1]}
+  clone_url="git@$ALIAS:$slug"
+  run install -d -m 700 "$HOME/.ssh"
+  if [ -e "$key" ]; then
+    note "ключ уже есть: $key"
+  else
+    run ssh-keygen -q -t ed25519 -N '' -C "claude@$HOST memory deploy key" -f "$key"
+  fi
+
+  kh="$HOME/.ssh/known_hosts"
+  cur="$( (ssh-keygen -F github.com -f "$kh" 2>/dev/null || true) | grep -v '^#' \
+    | ssh-keygen -lf - 2>/dev/null | awk '/ED25519/{print $2}' | head -n1 || true)"
+  if [ "$cur" = "$GITHUB_ED25519_FPR" ]; then
+    note "github.com в known_hosts, отпечаток совпадает с официальным"
+  elif [ -n "$cur" ]; then
+    die "в $kh у github.com чужой отпечаток $cur, разберитесь вручную"
+  else
+    tmp="$(mktemp)"
+    ssh-keyscan -t ed25519 github.com 2>/dev/null >"$tmp"
+    got="$(ssh-keygen -lf "$tmp" 2>/dev/null | awk '{print $2}')"
+    [ "$got" = "$GITHUB_ED25519_FPR" ] || { rm -f "$tmp"; die "отпечаток github.com «${got:-нет}» не совпал с официальным"; }
+    printf '+ cat >> %q  (ключ github.com, %s)\n' "$kh" "$got"
+    cat "$tmp" >>"$kh"
+    rm -f "$tmp"
+  fi
+
+  cfg="$HOME/.ssh/config"
+  if grep -qx "Host $ALIAS" "$cfg" 2>/dev/null; then
+    note "ssh-алиас $ALIAS уже есть в $cfg"
+  else
+    printf '+ дописываю в %s блок Host %s → github.com, ключ %s\n' "$cfg" "$ALIAS" "$key"
+    printf '\nHost %s\n  HostName github.com\n  User git\n  IdentityFile %s\n  IdentitiesOnly yes\n' \
+      "$ALIAS" "$key" >>"$cfg"
+    chmod 600 "$cfg"
+  fi
+
+  if ! git ls-remote "$clone_url" >/dev/null 2>&1; then
+    cat <<EOF
+
+    Добавьте ключ в репозиторий $slug:
+    GitHub → Settings → Deploy keys → Add deploy key, отметьте «Allow write access».
+    Ключ:
+      $(cat "$key.pub")
+
+EOF
+    until git ls-remote "$clone_url" >/dev/null 2>&1; do
+      ask "Нажмите Enter, когда ключ добавлен (или Ctrl+C, чтобы выйти):"
+    done
+  fi
+  note "доступ к $slug есть"
+fi
+
+# --- клон ----------------------------------------------------------------------
+if [ -d "$MEM/.git" ]; then
+  origin="$(git -C "$MEM" remote get-url origin)"
+  [ "$origin" = "$clone_url" ] || die "$MEM уже клон другого репозитория ($origin)"
+  if git -C "$MEM" rev-parse -q --verify HEAD >/dev/null; then
+    run git -C "$MEM" pull -q --ff-only
+  fi
+elif [ -e "$MEM" ] && [ -n "$(ls -A "$MEM")" ]; then
+  die "$MEM не пуста и не клон, не трогаю"
+else
+  run git clone -q "$clone_url" "$MEM"
+fi
+if ! git -C "$MEM" rev-parse -q --verify HEAD >/dev/null; then
+  # пустой репозиторий: первая ветка — main
+  run git -C "$MEM" symbolic-ref HEAD refs/heads/main
+fi
+
+# --- шаблоны -------------------------------------------------------------------
+if [ ! -e "$MEM/README.md" ]; then
+  note "репозиторий пуст: кладу общие шаблоны"
+  run cp -rn "$TEMPLATES/memory/." "$MEM/"
+fi
+hostdir="$MEM/hosts/$HOST"
+if [ -d "$hostdir" ]; then
+  note "папка этой VM уже есть: hosts/$HOST"
+else
+  run mkdir -p "$hostdir"
+  run cp -rn "$TEMPLATES/host/." "$hostdir/"
+  printf '+ подставляю имя VM %s в шаблоны hosts/%s\n' "$HOST" "$HOST"
+  find "$hostdir" -type f -exec sed -i "s/HOST/$HOST/g" {} +
+fi
+
+# --- коммит и пуш ----------------------------------------------------------------
+if [ -n "$(git -C "$MEM" status --porcelain)" ]; then
+  run git -C "$MEM" add -A
+  # строку с самой инструкцией проверки (README памяти) не считаем находкой
+  if git -C "$MEM" diff --cached | grep -n -i -E "password|passwd|secret|token|api[_-]?key|PRIVATE KEY|BEGIN OPENSSH" \
+      | grep -v 'grep -n -i -E'; then
+    die "в изменениях похоже на секрет, не коммичу: проверьте $MEM"
+  fi
+  run git -C "$MEM" commit -q -m "memory: connect host $HOST"
+  run git -C "$MEM" push -q -u origin HEAD
+else
+  note "изменений нет"
+fi
+
+printf '\nГотово: память в %s, папка этой VM — hosts/%s.\n' "$MEM" "$HOST"

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Ждёт новую задачу от чата в репозитории и завершается, напечатав одну строку.
+# Запускать в фоне (Bash с run_in_background): Claude Code просыпается, когда
+# скрипт завершился. Пока он ждёт, модель не работает и токены не тратятся:
+# опрос — это обычный git ls-remote.
+#
+#   claude-watch-exchange [--repo ДИР] [--path ПРЕФИКС]   ждать
+#   claude-watch-exchange --status                        running / stopped
+#
+# Репозиторий и путь по умолчанию: ~/github/memory и hosts/<имя VM>/exchange/,
+# если память подключена, иначе ~/github и exchange/.
+#
+# Темп: пока есть активность (запись в разговорах Claude или новый коммит на
+# GitHub) — раз в 3 минуты; после 15 минут тишины — раз в 5; после 30 минут
+# полной тишины таймер сам выключается.
+#
+# Что печатает при завершении:
+#   NEW: <файлы> | <тема коммита>   появилась задача от чата (*from-claude.md)
+#   IDLE-STOP: <минут>              тишина дольше предела, таймер выключен
+#   ALREADY-RUNNING                 другой таймер уже работает
+#   ERROR: <причина>
+#
+# Переменные: WATCH_ACTIVE_POLL=180 WATCH_SLOW_POLL=300 WATCH_ACTIVE_WINDOW=900
+#             WATCH_IDLE_STOP=1800 WATCH_BRANCH=main WATCH_ACTIVITY_DIR=~/.claude/projects
+set -uo pipefail
+
+ACTIVE_POLL=${WATCH_ACTIVE_POLL:-180}
+SLOW_POLL=${WATCH_SLOW_POLL:-300}
+ACTIVE_WINDOW=${WATCH_ACTIVE_WINDOW:-900}
+IDLE_STOP=${WATCH_IDLE_STOP:-1800}
+BRANCH=${WATCH_BRANCH:-main}
+ACTIVITY_DIR=${WATCH_ACTIVITY_DIR:-$HOME/.claude/projects}
+STATE_DIR=${WATCH_STATE_DIR:-$HOME/.cache/claude-watch-exchange}
+HOST="$(uname -n | cut -d. -f1)"
+
+repo="" path="" status=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) repo="${2:?после --repo нужна папка}"; shift 2 ;;
+    --path) path="${2:?после --path нужен префикс}"; shift 2 ;;
+    --status) status=1; shift ;;
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
+    *) echo "ERROR: неизвестный аргумент: $1"; exit 2 ;;
+  esac
+done
+
+mkdir -p "$STATE_DIR"
+exec 9>"$STATE_DIR/lock"
+
+if [ "$status" -eq 1 ]; then
+  if flock -n 9; then echo stopped; else echo running; fi
+  exit 0
+fi
+flock -n 9 || { echo "ALREADY-RUNNING"; exit 0; }
+
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$STATE_DIR/log"; }
+
+if [ -z "$repo" ]; then
+  if [ -d "$HOME/github/memory/.git" ]; then repo="$HOME/github/memory"
+  elif [ -d "$HOME/github/.git" ]; then repo="$HOME/github"
+  else echo "ERROR: нет ни ~/github/memory, ни ~/github — нечего ждать"; exit 2; fi
+fi
+if [ -z "$path" ]; then
+  if [ -d "$repo/hosts/$HOST/exchange" ]; then path="hosts/$HOST/exchange/"; else path="exchange/"; fi
+fi
+
+now() { date +%s; }
+# Последняя запись в разговорах Claude: признак, что с агентом работают.
+owner_activity() {
+  find "$ACTIVITY_DIR" -name '*.jsonl' -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1 | cut -d. -f1
+}
+remote_head() { git -C "$repo" ls-remote origin "refs/heads/$BRANCH" 2>/dev/null | cut -f1; }
+
+last="$(remote_head)"
+[ -n "$last" ] || last="$(git -C "$repo" rev-parse "origin/$BRANCH" 2>/dev/null || true)"
+[ -n "$last" ] || { echo "ERROR: не удалось узнать состояние origin/$BRANCH в $repo"; exit 2; }
+last_gh=$(now)
+log "старт: $repo, $path, ветка $BRANCH, коммит ${last:0:7}"
+
+while true; do
+  t=$(now)
+  mine=$(owner_activity); mine=${mine:-0}
+  latest=$(( last_gh > mine ? last_gh : mine ))
+  idle=$(( t - latest ))
+  if [ "$idle" -ge "$IDLE_STOP" ]; then
+    log "стоп: тишина $((idle / 60)) мин"
+    echo "IDLE-STOP: $((idle / 60)) мин без ваших сообщений и без обновлений на GitHub"
+    exit 0
+  fi
+  interval=$SLOW_POLL
+  [ "$idle" -lt "$ACTIVE_WINDOW" ] && interval=$ACTIVE_POLL
+  sleep "$interval" 9>&-
+
+  cur="$(remote_head)"
+  [ -n "$cur" ] || continue          # нет сети или GitHub не ответил: просто ещё раз позже
+  [ "$cur" != "$last" ] || continue
+
+  last_gh=$(now)                      # любое изменение на GitHub — это активность
+  git -C "$repo" fetch -q origin "$BRANCH" 2>/dev/null || { sleep 5 9>&-; git -C "$repo" fetch -q origin "$BRANCH" 2>/dev/null; }
+  if files="$(git -C "$repo" diff --name-only "$last" "$cur" -- "$path" 2>/dev/null)"; then
+    tasks="$(grep -E 'from-claude\.md$' <<<"$files" | paste -sd' ' -)"
+  else
+    tasks="(не удалось определить файлы)"
+  fi
+  prev=$last; last=$cur
+  if [ -n "$tasks" ]; then
+    subject="$(git -C "$repo" log -1 --format=%s "$cur" 2>/dev/null)"
+    log "новая задача: $tasks (${prev:0:7}..${cur:0:7})"
+    echo "NEW: $tasks | $subject"
+    exit 0
+  fi
+  log "изменение без задач: ${prev:0:7}..${cur:0:7}"
+done

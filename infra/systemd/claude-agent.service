@@ -1,0 +1,17 @@
+[Unit]
+Description=Claude Code Remote Control session (tmux, user claude)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=claude
+# Full PAM login session so auditd tags everything with auid=claude
+PAMName=login
+WorkingDirectory=/home/claude/github
+ExecStart=/usr/bin/tmux new-session -d -s claude "claude --remote-control claude; exec bash"
+ExecStop=/usr/bin/tmux kill-session -t claude
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Update Claude Code from the Anthropic apt repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DEBIAN_FRONTEND=noninteractive
+# Only the Claude Code list is refreshed; the rest of the system is untouched.
+ExecStart=/usr/bin/apt-get update -o Dir::Etc::sourcelist=sources.list.d/claude-code.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+ExecStart=/usr/bin/apt-get install -y --only-upgrade claude-code
