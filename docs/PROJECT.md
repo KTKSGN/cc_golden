@@ -15,7 +15,7 @@ bootstrap.sh                 установщик + встроенный арх�
 infra/                       исходники (из них bootstrap.sh собирается)
   install.sh                   логика установки
   build.sh                     сборка bootstrap.sh и проверка --check
-  CLAUDE.md                    правила агента → /etc/claude-code/CLAUDE.md
+  CLAUDE.md                    единый файл правил агента → /etc/claude-code/CLAUDE.md
   systemd/                     служба агента, обновление Claude Code
   bin/                         скрипты агента
   templates/                   пустые шаблоны памяти (только заголовки)
@@ -48,7 +48,7 @@ docs/PROJECT.md              этот документ
 2. **Пользователь `claude`:** без пароля, без `sudo`; папка `/home/claude/github`. Сразу после создания проверяется, что `claude` **не может менять сам установщик** (иначе он получил бы root).
 3. **Пакеты:** `sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client`.
 4. **Claude Code** из apt-репозитория Anthropic (канал stable). Ключ репозитория сверяется с отпечатком `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`, при несовпадении установка останавливается.
-5. **Правила агента** в `/etc/claude-code/CLAUDE.md`.
+5. **Правила агента** — один файл `infra/CLAUDE.md` → `/etc/claude-code/CLAUDE.md`; установщик проверяет, что он совпадает с эталоном, и убирает лишние файлы правил в рабочей папке.
 6. **Служба, таймер обновления, скрипты.**
 7. **Копия эталона** в `/opt/claude-golden`, рабочая папка: `source/` и ссылка `infra`.
 8. **Включение** auditd, таймера обновления, службы агента.
@@ -126,7 +126,8 @@ chk "claude-agent.service работает" systemctl is-active claude-agent.ser
 chk "таймер обновления Claude Code включён" systemctl is-enabled claude-code-update.timer
 chk "auditd работает" systemctl is-active auditd
 chk "tmux-сессия claude есть" runuser -u claude -- tmux has-session -t claude
-chk "правила /etc/claude-code/CLAUDE.md на месте" test -s /etc/claude-code/CLAUDE.md
+chk "правила /etc/claude-code/CLAUDE.md совпадают с эталоном" cmp -s /etc/claude-code/CLAUDE.md /opt/claude-golden/infra/CLAUDE.md
+chk "нет лишних файлов правил в рабочей папке" test ! -e /home/claude/github/CLAUDE.md
 chk "эталон /opt/claude-golden принадлежит root" test "$(stat -c %U /opt/claude-golden)" = root
 chk "агент НЕ может писать в эталон" bash -c "! runuser -u claude -- test -w /opt/claude-golden/infra"
 chk "рабочая папка: source/ и ссылка infra" bash -c "test -d /home/claude/github/source && test \"\$(readlink /home/claude/github/infra)\" = /opt/claude-golden/infra"

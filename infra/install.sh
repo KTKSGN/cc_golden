@@ -295,6 +295,12 @@ install_claude_code() {
 install_rules() {
   step "5. Правила Claude: /etc/claude-code/CLAUDE.md"
   put_file "$INFRA_DIR/CLAUDE.md" /etc/claude-code/CLAUDE.md 644 root:root || true
+  # Единственный файл правил: старые дополнительные CLAUDE.md в рабочей папке убираем,
+  # иначе агент получит второй, расходящийся источник правил.
+  run rm -f "$AGENT_HOME/github/CLAUDE.md"
+  if ! cmp -s "$INFRA_DIR/CLAUDE.md" /etc/claude-code/CLAUDE.md; then
+    warn "/etc/claude-code/CLAUDE.md не совпадает с infra/CLAUDE.md — правила не установлены"
+  fi
 }
 
 install_systemd() {
