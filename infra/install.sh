@@ -34,7 +34,7 @@ CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 CLAUDE_APT_LIST=/etc/apt/sources.list.d/claude-code.list
 CLAUDE_APT_LINE="deb [signed-by=$CLAUDE_KEY_FILE] https://downloads.claude.ai/claude-code/apt/stable stable main"
 
-PACKAGES=(sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client)
+PACKAGES=(sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client acl)
 
 DRY=0
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -303,6 +303,18 @@ install_rules() {
   fi
 }
 
+install_exchange() {
+  # Общая папка агентов и владельца для обмена файлами внутри VM.
+  # Группа agents; setgid и default ACL, чтобы файлы любого участника были доступны остальным.
+  step "5b. Общая папка обмена: /home/exchange (группа agents)"
+  getent group agents >/dev/null || run groupadd agents
+  run usermod -aG agents "$AGENT_USER"
+  id codex >/dev/null 2>&1 && run usermod -aG agents codex || true
+  run install -d -m 2775 -o root -g agents /home/exchange
+  run setfacl -m g:agents:rwx -m d:g:agents:rwx /home/exchange
+  note "/home/exchange: root:agents, 2775, default ACL группы agents"
+}
+
 install_systemd() {
   step "6. Служба агента, обновление Claude Code, скрипты"
   local d=/etc/systemd/system f
@@ -493,6 +505,7 @@ check_source_trust
 install_packages
 install_claude_code
 install_rules
+install_exchange
 install_systemd
 setup_golden
 enable_services
