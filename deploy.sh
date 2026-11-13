@@ -3,7 +3,10 @@
 # Запуск: bash ~/deploy.sh   (под своим пользователем с sudo, или под root после «su -»)
 set -euo pipefail
 
-URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
+# Репозиторий эталона: по умолчанию публичный эталон владельца; другой пользователь задаёт свой:
+# CC_GOLDEN_REPO=ЛОГИН/РЕПО bash ~/deploy.sh
+REPO=${CC_GOLDEN_REPO:-KTKSGN/cc_golden}
+URL=https://raw.githubusercontent.com/$REPO/main/bootstrap.sh
 SHA=05c8fdcc08be89be276fe0f872976242e43a4abf8d3e7ae832b6e9f69aba1a49
 
 if [ "$(id -un)" = claude ]; then
