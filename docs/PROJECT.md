@@ -31,7 +31,7 @@ docs/PROJECT.md              этот документ
 | `/etc/systemd/system/claude-code-update.{service,timer}` | раз в неделю обновляет только пакет `claude-code` | root |
 | `/opt/claude-golden/infra/` | копия эталона (шаблоны, справка), агент только читает | root |
 | `~claude/.local/bin/` | `claude-agent-start`, `claude-rc`, `claude-connect-memory` | claude |
-| `/home/claude/github/` | рабочая папка агента (см. ниже) | claude |
+| `/home/claude/` | рабочая папка агента; проекты, память и эталон в `github/` (см. ниже) | claude |
 
 Рабочая папка агента:
 
@@ -44,7 +44,7 @@ docs/PROJECT.md              этот документ
 
 ## 3. Что делает установщик (по шагам)
 
-1. **Проверки:** root, Debian 13, все файлы на месте.
+1. **Проверки:** root, Debian 13 / Ubuntu Server 26.04 LTS, все файлы на месте.
 2. **Пользователь `claude`:** без пароля, без `sudo`; папка `/home/claude/github`. Сразу после создания проверяется, что `claude` **не может менять сам установщик** (иначе он получил бы root).
 3. **Пакеты:** `sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client`.
 4. **Claude Code** из apt-репозитория Anthropic (канал stable). Ключ репозитория сверяется с отпечатком `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`, при несовпадении установка останавливается.
@@ -114,7 +114,7 @@ p=0; f=0
 chk() { local d=$1; shift; if "$@" </dev/null >/dev/null 2>&1; then printf '[ OK ] %s\n' "$d"; p=$((p+1)); else printf '[FAIL] %s\n' "$d"; f=$((f+1)); fi; }
 . /etc/os-release
 echo "Система: $PRETTY_NAME, ядро $(uname -r), хост $(uname -n)"
-chk "Debian 13" test "$VERSION_ID" = 13
+chk "Debian 13 / Ubuntu Server 26.04 LTS" bash -c 'case "$1:$2" in debian:13|ubuntu:26.04) exit 0;; *) exit 1;; esac' _ "$ID" "$VERSION_ID"
 chk "пользователь claude есть" id claude
 chk "пароль claude заблокирован" bash -c "passwd -S claude | awk '{exit \$2!=\"L\"}'"
 chk "claude НЕ в группе sudo" bash -c "! id -nG claude | tr ' ' '\n' | grep -qx sudo"
@@ -201,7 +201,7 @@ hosts/<имя VM>/
 
 ## 11. Ограничения
 
-- Только Debian 13 (проверка в установщике).
+- Debian 13 и Ubuntu Server 26.04 LTS; автоопределение или `--os debian|ubuntu`, несовпадение ОС и версии запрещено.
 - Нет команды удаления: откат через `.bak-*`, `/opt/claude-golden.prev` и снапшот VM.
 - Установщик не перезапускает работающую службу: новые файлы службы вступят в силу после перезапуска или перезагрузки.
 - Вход в аккаунт Claude делается руками и в образ не попадает.

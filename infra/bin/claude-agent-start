@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Remote Control session name: one per VM, so several VMs differ in the app
 name="claude-$(uname -n | cut -d. -f1)"
-workdir="$HOME/github"
+workdir="$HOME"
 # Transcripts live in ~/.claude/projects/<workdir with / replaced by ->
 projdir="$HOME/.claude/projects/${workdir//\//-}"
 

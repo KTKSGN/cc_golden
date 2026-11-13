@@ -4,7 +4,7 @@
 set -euo pipefail
 
 URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
-SHA=82ce642eceac242d460d43e518ec9bcc49228dddfc9c94bae3e93221433937dd
+SHA=05c8fdcc08be89be276fe0f872976242e43a4abf8d3e7ae832b6e9f69aba1a49
 
 if [ "$(id -un)" = claude ]; then
   echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1

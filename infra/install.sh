@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Установщик окружения Claude Code на Debian 13. Вопросов не задаёт. Сеть не
+# Установщик окружения Claude Code на Debian 13 / Ubuntu Server 26.04 LTS. Вопросов не задаёт. Сеть не
 # трогает: на машине она должна быть готова.
 #
-#   sudo bash bootstrap.sh [--dry-run]
+#   sudo bash bootstrap.sh [--dry-run] [--os debian|ubuntu]
 #
 # bootstrap.sh — один автономный файл: этот скрипт и все файлы эталона внутри
 # (собирает infra/build.sh). С GitHub ничего не скачивается, файл можно
-# перенести флешкой. Из сети берутся только пакеты Debian и Claude Code.
+# перенести флешкой. Из сети берутся только пакеты ОС и Claude Code.
 #
 # Каждая команда, меняющая систему, сначала печатается (строка «+ …»), потом
 # выполняется. Существующие файлы без вопроса не заменяются; при замене
@@ -34,19 +34,28 @@ CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 CLAUDE_APT_LIST=/etc/apt/sources.list.d/claude-code.list
 CLAUDE_APT_LINE="deb [signed-by=$CLAUDE_KEY_FILE] https://downloads.claude.ai/claude-code/apt/stable stable main"
 
+# Имена этих пакетов одинаковы в Debian и Ubuntu; passt содержит pasta для podman.
 PACKAGES=(sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client acl)
 
 DRY=0
+TARGET_OS=""
 STAMP="$(date +%Y%m%d-%H%M%S)"
 RESULTS=()
 FAILS=0
 
-for arg in "$@"; do
-  case "$arg" in
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY=1 ;;
+    --os)
+      case "${2:-}" in
+        debian|ubuntu) TARGET_OS=$2; shift ;;
+        *) echo "для --os укажите debian или ubuntu" >&2; exit 2 ;;
+      esac
+      ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$SELF"; exit 0 ;;
-    *) echo "неизвестный аргумент: $arg" >&2; exit 2 ;;
+    *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 # --- вывод и выполнение ---------------------------------------------------
@@ -171,9 +180,14 @@ check_system() {
   fi
   # shellcheck disable=SC1091
   . /etc/os-release
-  if [ "${ID:-}" != debian ] || [ "${VERSION_ID:-}" != 13 ]; then
-    die "нужен Debian 13, а здесь ${PRETTY_NAME:-неизвестная система}"
+  if [ -n "$TARGET_OS" ] && [ "$TARGET_OS" != "${ID:-}" ]; then
+    die "выбрана ОС $TARGET_OS (--os), а здесь ${PRETTY_NAME:-неизвестная система} (ID=${ID:-не задан})"
   fi
+  TARGET_OS=${TARGET_OS:-${ID:-}}
+  case "$TARGET_OS:${VERSION_ID:-}" in
+    debian:13|ubuntu:26.04) ;;
+    *) die "нужен Debian 13 или Ubuntu Server 26.04 LTS, а здесь ${PRETTY_NAME:-неизвестная система} (ID=${ID:-не задан}, VERSION_ID=${VERSION_ID:-не задан})" ;;
+  esac
   note "система: $PRETTY_NAME"
   for f in CLAUDE.md systemd/claude-agent.service \
            systemd/claude-agent.service.d/{resume,workdir,wait-dns}.conf \
@@ -219,6 +233,7 @@ create_user() {
     home="$(getent passwd "$AGENT_USER" | cut -d: -f6)"
     [ "$home" = "$AGENT_HOME" ] || die "домашняя папка $AGENT_USER — $home, ожидалась $AGENT_HOME"
   else
+    # UID выбирает useradd: существующий ubuntu (обычно UID 1000) не меняется.
     run useradd -m -s /bin/bash -c 'Claude Code agent' "$AGENT_USER"
   fi
   # useradd не трогает уже существующую папку: тогда она может быть чужой

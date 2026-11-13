@@ -4,7 +4,7 @@
 set -euo pipefail
 
 name="${1:-claude}"
-workdir="${2:-$HOME/github}"
+workdir="${2:-$HOME}"
 rc_name="claude-$(uname -n | cut -d. -f1)"
 
 if ! tmux has-session -t "$name" 2>/dev/null; then
