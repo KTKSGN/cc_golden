@@ -178,7 +178,7 @@ check_system() {
   for f in CLAUDE.md systemd/claude-agent.service \
            systemd/claude-agent.service.d/{resume,workdir,wait-dns}.conf \
            systemd/claude-code-update.{service,timer} \
-           bin/claude-agent-start bin/claude-rc bin/claude-connect-memory bin/claude-watch-exchange \
+           bin/claude-agent-start bin/claude-rc bin/claude-connect-memory \
            templates/memory/README.md templates/host/JOURNAL.md; do
     [ -r "$INFRA_DIR/$f" ] || die "нет файла $INFRA_DIR/$f"
   done
@@ -318,7 +318,7 @@ install_systemd() {
   done
   agent_dir "$AGENT_HOME/.local" 755
   agent_dir "$AGENT_HOME/.local/bin" 755
-  for f in claude-agent-start claude-rc claude-connect-memory claude-watch-exchange; do
+  for f in claude-agent-start claude-rc claude-connect-memory; do
     put_file "$INFRA_DIR/bin/$f" "$AGENT_HOME/.local/bin/$f" 755 "$AGENT_USER:$AGENT_USER" || true
   done
   run systemctl daemon-reload

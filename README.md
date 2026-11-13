@@ -21,7 +21,7 @@ cat > ~/deploy.sh <<'EOF'
 set -euo pipefail
 
 URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
-SHA=2842167c0cbbd450558e2c2b3184ee31b8f22cefd79939bc3859767f785bc8be
+SHA=97d57f7c063d1d52885904214d2418b29db071f95715758aeb757e9700702122
 
 if [ "$(id -un)" = claude ]; then
   echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1
@@ -105,10 +105,6 @@ sudo bash bootstrap.sh
 
 `memory/` устроена так, чтобы одну память делили несколько VM: общее — в корне и `notes/`, своё у каждой машины — в `hosts/<имя VM>/` (журнал и обмен задачами с Claude в чате). Протокол — `infra/templates/memory/README.md`, он же попадает в `memory/README.md` при подключении пустого репозитория.
 
-## Таймер задач от чата
-
-`claude-watch-exchange` ждёт новую задачу от чата в `exchange/` (или `memory/hosts/<имя VM>/exchange/`). Опрос — обычный `git ls-remote` без участия модели, поэтому токены не тратятся; агент просыпается только когда задача появилась и сообщает о ней владельцу, ничего не выполняя без его слова. Темп: раз в 3 минуты, пока идёт работа; раз в 5 после 15 минут тишины; через 30 минут без ваших сообщений и без коммитов на GitHub таймер сам выключается. Агент запускает его в начале активной работы.
-
 ## Как устроен файл и как меняется эталон
 
 `bootstrap.sh` — это `infra/install.sh`, за ним строка `exit 0`, метка `__INFRA_PAYLOAD__` и архив остальных файлов `infra/` (tar.gz в base64). При запуске установщик находит метку в себе и распаковывает архив во временную папку. Архив — только данные: bash дальше `exit 0` не читает.
@@ -134,5 +130,5 @@ infra/build.sh --check   # убедиться, что bootstrap.sh совпад�
 | `infra/CLAUDE.md` | `/etc/claude-code/CLAUDE.md` | root, 644 |
 | `infra/systemd/claude-agent.service` и `claude-agent.service.d/*.conf` | `/etc/systemd/system/` | root, 644 |
 | `infra/systemd/claude-code-update.{service,timer}` | `/etc/systemd/system/` | root, 644 |
-| `infra/bin/claude-agent-start`, `claude-rc`, `claude-connect-memory`, `claude-watch-exchange` | `/home/claude/.local/bin/` | claude, 755 |
+| `infra/bin/claude-agent-start`, `claude-rc`, `claude-connect-memory` | `/home/claude/.local/bin/` | claude, 755 |
 | `infra/` целиком, кроме `install.sh` и `build.sh` | `/opt/claude-golden/infra/` | root, 755 |

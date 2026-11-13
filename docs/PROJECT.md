@@ -30,7 +30,7 @@ docs/PROJECT.md              этот документ
 | `/etc/systemd/system/claude-agent.service` и `.d/{resume,wait-dns,workdir}.conf` | служба: Claude Code с Remote Control в tmux-сессии `claude` | root |
 | `/etc/systemd/system/claude-code-update.{service,timer}` | раз в неделю обновляет только пакет `claude-code` | root |
 | `/opt/claude-golden/infra/` | копия эталона (шаблоны, справка), агент только читает | root |
-| `~claude/.local/bin/` | `claude-agent-start`, `claude-rc`, `claude-connect-memory`, `claude-watch-exchange` | claude |
+| `~claude/.local/bin/` | `claude-agent-start`, `claude-rc`, `claude-connect-memory` | claude |
 | `/home/claude/github/` | рабочая папка агента (см. ниже) | claude |
 
 Рабочая папка агента:
@@ -131,7 +131,7 @@ chk "нет лишних файлов правил в рабочей папке"
 chk "эталон /opt/claude-golden принадлежит root" test "$(stat -c %U /opt/claude-golden)" = root
 chk "агент НЕ может писать в эталон" bash -c "! runuser -u claude -- test -w /opt/claude-golden/infra"
 chk "рабочая папка: source/ и ссылка infra" bash -c "test -d /home/claude/github/source && test \"\$(readlink /home/claude/github/infra)\" = /opt/claude-golden/infra"
-chk "скрипты агента в ~claude/.local/bin" bash -c "for s in claude-agent-start claude-rc claude-connect-memory claude-watch-exchange; do test -x /home/claude/.local/bin/\$s || exit 1; done"
+chk "скрипты агента в ~claude/.local/bin" bash -c "for s in claude-agent-start claude-rc claude-connect-memory; do test -x /home/claude/.local/bin/\$s || exit 1; done"
 chk "subuid/subgid для podman" bash -c "grep -q '^claude:' /etc/subuid && grep -q '^claude:' /etc/subgid"
 chk "DNS: api.anthropic.com резолвится" getent hosts api.anthropic.com
 chk "auditd пишет события claude" bash -c "ausearch -ul \$(id -u claude) -ts today"
@@ -158,16 +158,9 @@ README.md                  протокол (из infra/templates/memory/)
 notes/                     общее для всех VM
 hosts/<имя VM>/
   JOURNAL.md               журнал: что сделано, когда и зачем (новые записи сверху)
-  exchange/
-    from-claude.md         задачи от чата для агента этой VM (пометка «from Cloud»)
-    from-claude-code.md    ответы агента (пометка «from Cloud Code»)
 ```
 
-Агент пишет только в свою папку `hosts/<имя>/` и в `notes/`. Чат (Claude в приложении или на claude.ai) пишет задачи в `from-claude.md` и читает ответы. Сообщать чату путь не нужно: `README.md` в корне памяти начинается с раздела «Для Claude из чата», где описано, куда писать и как выбрать машину. Записи не удаляются и не правятся задним числом; ответ на задачу начинается с `[сделано]` или `[не сделано]`.
-
-### Таймер задач
-
-`claude-watch-exchange` ждёт новую запись `*from-claude.md`. Это обычный `git ls-remote` без участия модели, поэтому **токены не тратятся**; агент просыпается только когда задача появилась. Темп: раз в 3 минуты, пока идёт работа; раз в 5 после 15 минут тишины; через 30 минут без сообщений владельца и без коммитов на GitHub таймер сам выключается. Нашёл задачу — агент сообщает владельцу и **ничего не выполняет без его слова**. Запускается агентом в начале активной работы; в консоли Claude Code он виден как одна фоновая задача.
+Агент пишет только в свою папку `hosts/<имя>/` и в `notes/`.
 
 ## 7. Модель безопасности
 
