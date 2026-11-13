@@ -333,6 +333,8 @@ install_systemd() {
   for f in claude-agent-start claude-rc claude-connect-memory; do
     put_file "$INFRA_DIR/bin/$f" "$AGENT_HOME/.local/bin/$f" 755 "$AGENT_USER:$AGENT_USER" || true
   done
+  # Старый таймер задач из канала GitHub больше не нужен: убираем, если остался от прошлой установки
+  run rm -f "$AGENT_HOME/.local/bin/claude-watch-exchange"
   run systemctl daemon-reload
 }
 

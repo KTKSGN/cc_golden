@@ -21,7 +21,7 @@ cat > ~/deploy.sh <<'EOF'
 set -euo pipefail
 
 URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
-SHA=90cb620e9067f8fdd4c51ac54f040410e56a29a6f337202c5512cde90a32226a
+SHA=82ce642eceac242d460d43e518ec9bcc49228dddfc9c94bae3e93221433937dd
 
 if [ "$(id -un)" = claude ]; then
   echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1
