@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
-# Включает аудит запуска программ (execve) для всех учётных записей агентов: членов группы agents.
-# Реальные пользователи (с рабочим паролем) в аудит не попадают. Правила берутся из состава группы,
-# поэтому скрипт перезапускается при изменении /etc/group (claude-audit-refresh.path) и при установке.
+# Аудит учётных записей агентов: члены группы agents. Агент — это тот, кто в группе agents; все остальные
+# (владелец, root, любые пользователи, из-под которых запускаются скрипты) считаются живыми людьми и сюда не попадают.
+# Для каждого агента пишутся: запуск программ с аргументами (agents-exec), удаление и переименование (agents-del),
+# смена прав и владельца (agents-perm). Идентификатор uid в записи однозначно называет агента; время есть в каждой записи.
+# Правила пересоздаются при установке и при каждом изменении /etc/group (claude-audit-refresh.path).
 set -euo pipefail
 RULES=/etc/audit/rules.d/50-agents.rules
 tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
 {
-  echo "# Создано claude-audit-refresh: аудит запуска программ учётными записями группы agents. Не править вручную."
+  echo "# Создано claude-audit-refresh: аудит учётных записей группы agents. Не править вручную."
   members="$(getent group agents | cut -d: -f4 | tr ',' ' ')"
   for u in $members; do
     uid="$(id -u "$u" 2>/dev/null)" || continue
-    [ "$uid" -ge 1000 ] || continue
-    # L = пароль заблокирован, NP = пароля нет: агентская запись. P = рабочий пароль: живой пользователь, пропускаем.
-    # Состояние не определено (нет прав): считаем агентской записью, лучше записать лишнее, чем пропустить.
-    st="$(passwd -S "$u" 2>/dev/null | awk '{print $2}' || true)"
-    case "$st" in P) echo "# пропущен $u: рабочий пароль (реальный пользователь)"; continue ;; esac
+    # root и системные записи агентами не бывают
+    [ "$uid" -ge 1000 ] || { echo "# пропущен $u: uid $uid < 1000"; continue; }
+    echo "# агент $u (uid $uid)"
     echo "-a always,exit -F arch=b64 -S execve -F uid=$uid -k agents-exec"
     if [ "$(uname -m)" = x86_64 ]; then echo "-a always,exit -F arch=b32 -S execve -F uid=$uid -k agents-exec"; fi
+    echo "-a always,exit -F arch=b64 -S unlink,unlinkat,rename,renameat,rmdir -F uid=$uid -k agents-del"
+    echo "-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,lchown,fchownat -F uid=$uid -k agents-perm"
   done
 } >"$tmp"
 install -o root -g root -m 0640 "$tmp" "$RULES"
