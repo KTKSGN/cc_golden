@@ -179,6 +179,7 @@ check_system() {
            systemd/claude-agent.service.d/{resume,workdir,wait-dns}.conf \
            systemd/claude-code-update.{service,timer} \
            bin/claude-agent-start bin/claude-rc bin/claude-connect-memory bin/claude-watch-exchange \
+           bin/agent-attach profile/claude-alias.sh \
            templates/memory/README.md templates/host/JOURNAL.md; do
     [ -r "$INFRA_DIR/$f" ] || die "нет файла $INFRA_DIR/$f"
   done
@@ -315,6 +316,9 @@ install_systemd() {
   for f in claude-agent-start claude-rc claude-connect-memory claude-watch-exchange; do
     put_file "$INFRA_DIR/bin/$f" "$AGENT_HOME/.local/bin/$f" 755 "$AGENT_USER:$AGENT_USER" || true
   done
+  # claude, codex, gemini = подключение к единственным сессиям агентов (tmux) для входящих по SSH
+  put_file "$INFRA_DIR/bin/agent-attach" /usr/local/bin/agent-attach 755 root:root || true
+  put_file "$INFRA_DIR/profile/claude-alias.sh" /etc/profile.d/claude-alias.sh 644 root:root || true
   run systemctl daemon-reload
 }
 

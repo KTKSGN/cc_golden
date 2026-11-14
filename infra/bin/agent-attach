@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Подключиться к единственной интерактивной сессии агента на этой VM: claude, codex или gemini (jarvis — журнал службы).
+# Новых параллельных сессий не плодит: если сессия есть — подключает, нет (codex/gemini) — создаёт одну и подключает.
+# Отключиться, не завершая сессию: Ctrl-b, затем d (не exit и не Ctrl-D).
+# AGENT_ATTACH_DRY=1 — только показать план.
+set -euo pipefail
+name="${1:-}"
+case "$name" in
+  claude) user=claude; sock="" ;;                          # служба claude-agent (tmux в сокете по умолчанию)
+  codex|gemini) user="$name"; sock="/srv/ai/tmux/$name.sock" ;;
+  jarvis)  # заглушка core — служба без терминала: показываем её журнал и состояние
+    if [ "${AGENT_ATTACH_DRY:-0}" = 1 ]; then echo "агент: jarvis: статус и журнал службы jarvis-stub"; exit 0; fi
+    cat /var/lib/jarvis-stub/status.json 2>/dev/null; echo
+    exec sudo journalctl -u jarvis-stub -n 30 -f ;;
+  *) echo "использование: agent-attach claude|codex|gemini|jarvis" >&2; exit 2 ;;
+esac
+user="${AGENT_ATTACH_USER:-$user}"
+home="$(getent passwd "$user" | cut -d: -f6)"
+
+as_agent() { if [ "$(id -un)" = "$user" ]; then "$@"; else sudo -u "$user" "$@"; fi; }
+tm() { if [ -n "$sock" ]; then as_agent tmux -S "$sock" "$@"; else as_agent tmux "$@"; fi; }
+
+if [ "${AGENT_ATTACH_DRY:-0}" = 1 ]; then
+  echo "агент: $name, пользователь: $user, сокет: ${sock:-по умолчанию}"
+  echo "1) есть сессия $name? tmux has-session -t $name"
+  [ "$name" = claude ] && echo "2) нет сессии → ошибка (запустить службу: sudo systemctl start claude-agent)" || echo "2) нет сессии → tmux new-session -d -s $name -c $home; права сокета 660; доступ для claude"
+  echo "3) tmux attach -t $name"
+  exit 0
+fi
+
+if [ -n "${TMUX:-}" ]; then echo "Вы уже внутри tmux; отключитесь (Ctrl-b d) и повторите." >&2; exit 0; fi
+
+if ! tm has-session -t "$name" 2>/dev/null; then
+  if [ "$name" = claude ]; then
+    echo "Сессии claude нет. Запустите службу: sudo systemctl start claude-agent" >&2; exit 1
+  fi
+  tm new-session -d -s "$name" -c "$home"
+  as_agent chmod 660 "$sock" 2>/dev/null || true
+  tm server-access -a claude 2>/dev/null || true
+  echo "Создана сессия $name (раньше её не было)." >&2
+fi
+if [ -n "$sock" ]; then exec_cmd=(tmux -S "$sock" attach -t "$name"); else exec_cmd=(tmux attach -t "$name"); fi
+if [ "$(id -un)" = "$user" ]; then exec "${exec_cmd[@]}"; else exec sudo -u "$user" "${exec_cmd[@]}"; fi

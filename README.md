@@ -21,7 +21,7 @@ cat > ~/deploy.sh <<'EOF'
 set -euo pipefail
 
 URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
-SHA=007cd4e491652f9b6c2835b700400bb1117841aec549597f19ae80d760269086
+SHA=817d07547347eeea319cdb59938e1723142042d58ed7e6ffe31ef22751bfda20
 
 if [ "$(id -un)" = claude ]; then
   echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1
@@ -135,4 +135,6 @@ infra/build.sh --check   # убедиться, что bootstrap.sh совпад�
 | `infra/systemd/claude-agent.service` и `claude-agent.service.d/*.conf` | `/etc/systemd/system/` | root, 644 |
 | `infra/systemd/claude-code-update.{service,timer}` | `/etc/systemd/system/` | root, 644 |
 | `infra/bin/claude-agent-start`, `claude-rc`, `claude-connect-memory`, `claude-watch-exchange` | `/home/claude/.local/bin/` | claude, 755 |
+| `infra/bin/agent-attach` | `/usr/local/bin/agent-attach` (подключение к единственной сессии claude, codex или gemini) | root, 755 |
+| `infra/profile/claude-alias.sh` | `/etc/profile.d/claude-alias.sh` (алиасы `claude`, `codex`, `gemini`, `jarvis` = подключиться к единственным сессиям агентов (jarvis — журнал заглушки); настоящие программы: `command claude` и т.д.) | root, 644 |
 | `infra/` целиком, кроме `install.sh` и `build.sh` | `/opt/claude-golden/infra/` | root, 755 |

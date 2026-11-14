@@ -31,6 +31,8 @@ docs/PROJECT.md              этот документ
 | `/etc/systemd/system/claude-code-update.{service,timer}` | раз в неделю обновляет только пакет `claude-code` | root |
 | `/opt/claude-golden/infra/` | копия эталона (шаблоны, справка), агент только читает | root |
 | `~claude/.local/bin/` | `claude-agent-start`, `claude-rc`, `claude-connect-memory`, `claude-watch-exchange` | claude |
+| `/usr/local/bin/` | `agent-attach` | root |
+| `/etc/profile.d/` | `claude-alias.sh` (алиасы `claude`, `codex`, `gemini`, `jarvis` → `agent-attach`) | root |
 | `/home/claude/github/` | рабочая папка агента (см. ниже) | claude |
 
 Рабочая папка агента:
