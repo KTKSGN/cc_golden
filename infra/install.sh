@@ -310,6 +310,8 @@ install_claude_code() {
 install_rules() {
   step "5. Правила Claude: /etc/claude-code/CLAUDE.md"
   put_file "$INFRA_DIR/CLAUDE.md" /etc/claude-code/CLAUDE.md 644 root:root || true
+  # Хостовый слой правил: создаётся один раз, дальше его ведёт владелец от root
+  [ -e /etc/claude-code/host.md ] || put_file "$INFRA_DIR/templates/host/CLAUDE.md" /etc/claude-code/host.md 644 root:root || true
   # Единственный файл правил: старые дополнительные CLAUDE.md в рабочей папке убираем,
   # иначе агент получит второй, расходящийся источник правил.
   run rm -f "$AGENT_HOME/github/CLAUDE.md"

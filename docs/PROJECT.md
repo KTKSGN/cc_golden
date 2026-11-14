@@ -127,6 +127,7 @@ chk "таймер обновления Claude Code включён" systemctl is-
 chk "auditd работает" systemctl is-active auditd
 chk "tmux-сессия claude есть" runuser -u claude -- tmux has-session -t claude
 chk "правила /etc/claude-code/CLAUDE.md совпадают с эталоном" cmp -s /etc/claude-code/CLAUDE.md /opt/claude-golden/infra/CLAUDE.md
+chk "хостовый слой правил /etc/claude-code/host.md есть" test -s /etc/claude-code/host.md
 chk "нет лишних файлов правил в рабочей папке" test ! -e /home/claude/github/CLAUDE.md
 chk "эталон /opt/claude-golden принадлежит root" test "$(stat -c %U /opt/claude-golden)" = root
 chk "агент НЕ может писать в эталон" bash -c "! runuser -u claude -- test -w /opt/claude-golden/infra"
