@@ -1,0 +1,9 @@
+[Unit]
+Description=Следит за составом групп: обновляет правила аудита агентов
+
+[Path]
+PathChanged=/etc/group
+PathChanged=/etc/shadow
+
+[Install]
+WantedBy=multi-user.target

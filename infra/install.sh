@@ -194,6 +194,7 @@ check_system() {
            systemd/claude-code-update.{service,timer} \
            bin/claude-agent-start bin/claude-rc bin/claude-connect-memory \
            bin/agent-attach profile/claude-alias.sh \
+           bin/claude-audit-refresh systemd/claude-audit-refresh.{service,path} profile/sshd-agents-deny.conf \
            templates/memory/README.md templates/host/JOURNAL.md; do
     [ -r "$INFRA_DIR/$f" ] || die "нет файла $INFRA_DIR/$f"
   done
@@ -356,6 +357,14 @@ install_systemd() {
   put_file "$INFRA_DIR/profile/claude-alias.sh" /etc/profile.d/claude-alias.sh 644 root:root || true
   # Старый таймер задач из канала GitHub больше не нужен: убираем, если остался от прошлой установки
   run rm -f "$AGENT_HOME/.local/bin/claude-watch-exchange"
+  # Аудит запуска программ для группы agents и запрет входа агентов по SSH
+  put_file "$INFRA_DIR/bin/claude-audit-refresh" /usr/local/sbin/claude-audit-refresh 755 root:root || true
+  for f in claude-audit-refresh.service claude-audit-refresh.path; do
+    put_file "$INFRA_DIR/systemd/$f" "$d/$f" 644 root:root || true
+  done
+  if [ -d /etc/ssh/sshd_config.d ]; then
+    put_file "$INFRA_DIR/profile/sshd-agents-deny.conf" /etc/ssh/sshd_config.d/10-agents-deny.conf 644 root:root || true
+  fi
   run systemctl daemon-reload
 }
 
@@ -394,6 +403,16 @@ setup_golden() {
 enable_services() {
   step "8. Службы"
   run systemctl enable --now auditd
+  run systemctl enable --now claude-audit-refresh.path
+  run systemctl start claude-audit-refresh.service
+  if [ -d /etc/ssh/sshd_config.d ] && command -v sshd >/dev/null 2>&1 && [ "$DRY" -eq 0 ]; then
+    if sshd -t 2>/dev/null; then
+      systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    else
+      warn "sshd -t сообщил об ошибке конфигурации; убираю 10-agents-deny.conf"
+      run rm -f /etc/ssh/sshd_config.d/10-agents-deny.conf
+    fi
+  fi
   run systemctl enable --now claude-code-update.timer
   run systemctl enable claude-agent.service
   if systemctl is-active -q claude-agent.service 2>/dev/null; then
@@ -412,7 +431,7 @@ self_check() {
   step "9. Самопроверка"
   if [ "$DRY" -eq 1 ]; then
     note "(dry-run) проверил бы: claude установлен, claude-agent active, таймер обновления включён,"
-    note "эталон в $GOLDEN_DIR, source/ и infra в рабочей папке, subuid/subgid есть, auditd пишет auid $AGENT_USER"
+    note "эталон в $GOLDEN_DIR, source/ и infra в рабочей папке, subuid/subgid есть, аудит agents-exec включён"
     return
   fi
   local uid
@@ -446,10 +465,16 @@ self_check() {
   fi
   if ! systemctl is-active -q auditd; then
     result FAIL "auditd не активен"
-  elif ausearch -ul "$uid" -ts today >/dev/null 2>&1; then
-    result PASS "auditd пишет события с auid=$AGENT_USER"
+  elif ! auditctl -l 2>/dev/null | grep -q 'agents-exec'; then
+    result FAIL "правила аудита agents-exec не загружены (claude-audit-refresh)"
   else
-    result FAIL "в журнале auditd нет событий с auid=$AGENT_USER (служба агента стартовала?)"
+    runuser -u "$AGENT_USER" -- /bin/true 2>/dev/null || true
+    sleep 1
+    if ausearch -k agents-exec -ts recent >/dev/null 2>&1; then
+      result PASS "аудит запуска программ агентов включён (метка agents-exec)"
+    else
+      result FAIL "правила загружены, но событий agents-exec нет"
+    fi
   fi
 }
 

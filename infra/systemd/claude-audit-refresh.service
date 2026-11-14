@@ -1,0 +1,8 @@
+[Unit]
+Description=Аудит запуска программ для учётных записей группы agents
+After=auditd.service
+Requires=auditd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/claude-audit-refresh
