@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Установщик окружения Claude Code на Debian 13. Вопросов не задаёт. Сеть не
+# Установщик окружения Claude Code на Debian 13 / Ubuntu Server 26.04 LTS. Вопросов не задаёт. Сеть не
 # трогает: на машине она должна быть готова.
 #
-#   sudo bash bootstrap.sh [--dry-run]
+#   sudo bash bootstrap.sh [--dry-run] [--os debian|ubuntu]
 #
 # bootstrap.sh — один автономный файл: этот скрипт и все файлы эталона внутри
 # (собирает infra/build.sh). С GitHub ничего не скачивается, файл можно
-# перенести флешкой. Из сети берутся только пакеты Debian и Claude Code.
+# перенести флешкой. Из сети берутся только пакеты ОС и Claude Code.
 #
 # Каждая команда, меняющая систему, сначала печатается (строка «+ …»), потом
 # выполняется. Существующие файлы без вопроса не заменяются; при замене
@@ -34,19 +34,28 @@ CLAUDE_KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 CLAUDE_APT_LIST=/etc/apt/sources.list.d/claude-code.list
 CLAUDE_APT_LINE="deb [signed-by=$CLAUDE_KEY_FILE] https://downloads.claude.ai/claude-code/apt/stable stable main"
 
-PACKAGES=(sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client)
+# Имена этих пакетов одинаковы в Debian и Ubuntu; passt содержит pasta для podman.
+PACKAGES=(sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client acl)
 
 DRY=0
+TARGET_OS=""
 STAMP="$(date +%Y%m%d-%H%M%S)"
 RESULTS=()
 FAILS=0
 
-for arg in "$@"; do
-  case "$arg" in
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY=1 ;;
+    --os)
+      case "${2:-}" in
+        debian|ubuntu) TARGET_OS=$2; shift ;;
+        *) echo "для --os укажите debian или ubuntu" >&2; exit 2 ;;
+      esac
+      ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$SELF"; exit 0 ;;
-    *) echo "неизвестный аргумент: $arg" >&2; exit 2 ;;
+    *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 # --- вывод и выполнение ---------------------------------------------------
@@ -171,14 +180,19 @@ check_system() {
   fi
   # shellcheck disable=SC1091
   . /etc/os-release
-  if [ "${ID:-}" != debian ] || [ "${VERSION_ID:-}" != 13 ]; then
-    die "нужен Debian 13, а здесь ${PRETTY_NAME:-неизвестная система}"
+  if [ -n "$TARGET_OS" ] && [ "$TARGET_OS" != "${ID:-}" ]; then
+    die "выбрана ОС $TARGET_OS (--os), а здесь ${PRETTY_NAME:-неизвестная система} (ID=${ID:-не задан})"
   fi
+  TARGET_OS=${TARGET_OS:-${ID:-}}
+  case "$TARGET_OS:${VERSION_ID:-}" in
+    debian:13|ubuntu:26.04) ;;
+    *) die "нужен Debian 13 или Ubuntu Server 26.04 LTS, а здесь ${PRETTY_NAME:-неизвестная система} (ID=${ID:-не задан}, VERSION_ID=${VERSION_ID:-не задан})" ;;
+  esac
   note "система: $PRETTY_NAME"
   for f in CLAUDE.md systemd/claude-agent.service \
            systemd/claude-agent.service.d/{resume,workdir,wait-dns}.conf \
            systemd/claude-code-update.{service,timer} \
-           bin/claude-agent-start bin/claude-rc bin/claude-connect-memory bin/claude-watch-exchange \
+           bin/claude-agent-start bin/claude-rc bin/claude-connect-memory \
            bin/agent-attach profile/claude-alias.sh \
            templates/memory/README.md templates/host/JOURNAL.md; do
     [ -r "$INFRA_DIR/$f" ] || die "нет файла $INFRA_DIR/$f"
@@ -220,6 +234,7 @@ create_user() {
     home="$(getent passwd "$AGENT_USER" | cut -d: -f6)"
     [ "$home" = "$AGENT_HOME" ] || die "домашняя папка $AGENT_USER — $home, ожидалась $AGENT_HOME"
   else
+    # UID выбирает useradd: существующий ubuntu (обычно UID 1000) не меняется.
     run useradd -m -s /bin/bash -c 'Claude Code agent' "$AGENT_USER"
   fi
   # useradd не трогает уже существующую папку: тогда она может быть чужой
@@ -296,6 +311,26 @@ install_claude_code() {
 install_rules() {
   step "5. Правила Claude: /etc/claude-code/CLAUDE.md"
   put_file "$INFRA_DIR/CLAUDE.md" /etc/claude-code/CLAUDE.md 644 root:root || true
+  # Хостовый слой правил: создаётся один раз, дальше его ведёт владелец от root
+  [ -e /etc/claude-code/host.md ] || put_file "$INFRA_DIR/templates/host/CLAUDE.md" /etc/claude-code/host.md 644 root:root || true
+  # Единственный файл правил: старые дополнительные CLAUDE.md в рабочей папке убираем,
+  # иначе агент получит второй, расходящийся источник правил.
+  run rm -f "$AGENT_HOME/github/CLAUDE.md"
+  if ! cmp -s "$INFRA_DIR/CLAUDE.md" /etc/claude-code/CLAUDE.md; then
+    warn "/etc/claude-code/CLAUDE.md не совпадает с infra/CLAUDE.md — правила не установлены"
+  fi
+}
+
+install_exchange() {
+  # Общая папка агентов и владельца для обмена файлами внутри VM.
+  # Группа agents; setgid и default ACL, чтобы файлы любого участника были доступны остальным.
+  step "5b. Общая папка обмена: /home/exchange (группа agents)"
+  getent group agents >/dev/null || run groupadd agents
+  run usermod -aG agents "$AGENT_USER"
+  id codex >/dev/null 2>&1 && run usermod -aG agents codex || true
+  run install -d -m 2775 -o root -g agents /home/exchange
+  run setfacl -m g:agents:rwx -m d:g:agents:rwx /home/exchange
+  note "/home/exchange: root:agents, 2775, default ACL группы agents"
 }
 
 install_systemd() {
@@ -313,12 +348,14 @@ install_systemd() {
   done
   agent_dir "$AGENT_HOME/.local" 755
   agent_dir "$AGENT_HOME/.local/bin" 755
-  for f in claude-agent-start claude-rc claude-connect-memory claude-watch-exchange; do
+  for f in claude-agent-start claude-rc claude-connect-memory; do
     put_file "$INFRA_DIR/bin/$f" "$AGENT_HOME/.local/bin/$f" 755 "$AGENT_USER:$AGENT_USER" || true
   done
-  # claude, codex, gemini = подключение к единственным сессиям агентов (tmux) для входящих по SSH
+  # claude, codex, gemini, jarvis = подключение к единственным сессиям агентов (tmux) для входящих по SSH
   put_file "$INFRA_DIR/bin/agent-attach" /usr/local/bin/agent-attach 755 root:root || true
   put_file "$INFRA_DIR/profile/claude-alias.sh" /etc/profile.d/claude-alias.sh 644 root:root || true
+  # Старый таймер задач из канала GitHub больше не нужен: убираем, если остался от прошлой установки
+  run rm -f "$AGENT_HOME/.local/bin/claude-watch-exchange"
   run systemctl daemon-reload
 }
 
@@ -491,6 +528,7 @@ check_source_trust
 install_packages
 install_claude_code
 install_rules
+install_exchange
 install_systemd
 setup_golden
 enable_services

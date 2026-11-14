@@ -3,8 +3,11 @@
 # Запуск: bash ~/deploy.sh   (под своим пользователем с sudo, или под root после «su -»)
 set -euo pipefail
 
-URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
-SHA=817d07547347eeea319cdb59938e1723142042d58ed7e6ffe31ef22751bfda20
+# Репозиторий эталона: по умолчанию публичный эталон владельца; другой пользователь задаёт свой:
+# CC_GOLDEN_REPO=ЛОГИН/РЕПО bash ~/deploy.sh
+REPO=${CC_GOLDEN_REPO:-KTKSGN/cc_golden}
+URL=https://raw.githubusercontent.com/$REPO/main/bootstrap.sh
+SHA=1e274952ab9ed311e03155686be142bd171bc268827e5463d7ccf4501d802cde
 
 if [ "$(id -un)" = claude ]; then
   echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1

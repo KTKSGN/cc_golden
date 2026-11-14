@@ -1,8 +1,8 @@
 # Эталон VM для Claude Code
 
-Один файл `bootstrap.sh` на чистом Debian 13 поднимает машину, где Claude Code работает как отдельный непривилегированный пользователь `claude` и доступен владельцу через Remote Control (приложение Claude, вкладка Code).
+Один файл `bootstrap.sh` на чистом Debian 13 или Ubuntu Server 26.04 LTS поднимает машину, где Claude Code работает как отдельный непривилегированный пользователь `claude` и доступен владельцу через Remote Control (приложение Claude, вкладка Code).
 
-Файл автономный: установщик и все файлы эталона лежат внутри него. С GitHub при установке ничего не скачивается. Файл можно взять со страницы репозитория (Download raw file) или перенести флешкой, `scp`, как угодно. Из сети берутся только пакеты Debian и Claude Code из репозитория Anthropic.
+Файл автономный: установщик и все файлы эталона лежат внутри него. С GitHub при установке ничего не скачивается. Файл можно взять со страницы репозитория (Download raw file) или перенести флешкой, `scp`, как угодно. Из сети берутся только пакеты ОС и Claude Code из репозитория Anthropic.
 
 Сеть установщик не трогает: адрес, DNS и выход в интернет на машине должны уже работать. Изоляцию VM от локальной сети делайте на роутере (отдельная VLAN или правило «только интернет»): агенту видно всё, что видно машине.
 
@@ -10,7 +10,7 @@
 
 ## Установка копипастой (один блок)
 
-На свежем Debian 13 под своим пользователем вставьте блок **целиком**. Он создаёт `~/deploy.sh` и сразу его запускает: ставит `curl`, если его нет, скачивает `bootstrap.sh`, сверяет контрольную сумму и запускает установку. Ответы на вопросы установщика берутся с клавиатуры (`</dev/tty`), а не из вставленного текста. Без `sudo` (при установке Debian задан пароль root) войдите `su -` и вставьте тот же блок. Тот же скрипт лежит отдельным файлом: [`deploy.sh`](deploy.sh).
+На свежем Debian 13 или Ubuntu Server 26.04 LTS под своим пользователем вставьте блок **целиком**. Он создаёт `~/deploy.sh` и сразу его запускает: ставит `curl`, если его нет, скачивает `bootstrap.sh`, сверяет контрольную сумму и запускает установку. Ответы на вопросы установщика берутся с клавиатуры (`</dev/tty`), а не из вставленного текста. Без `sudo` (при установке Debian задан пароль root) войдите `su -` и вставьте тот же блок. Тот же скрипт лежит отдельным файлом: [`deploy.sh`](deploy.sh).
 
 <!-- deploy-block:begin -->
 ```bash
@@ -20,8 +20,11 @@ cat > ~/deploy.sh <<'EOF'
 # Запуск: bash ~/deploy.sh   (под своим пользователем с sudo, или под root после «su -»)
 set -euo pipefail
 
-URL=https://raw.githubusercontent.com/KTKSGN/cc_golden/main/bootstrap.sh
-SHA=817d07547347eeea319cdb59938e1723142042d58ed7e6ffe31ef22751bfda20
+# Репозиторий эталона: по умолчанию публичный эталон владельца; другой пользователь задаёт свой:
+# CC_GOLDEN_REPO=ЛОГИН/РЕПО bash ~/deploy.sh
+REPO=${CC_GOLDEN_REPO:-KTKSGN/cc_golden}
+URL=https://raw.githubusercontent.com/$REPO/main/bootstrap.sh
+SHA=1e274952ab9ed311e03155686be142bd171bc268827e5463d7ccf4501d802cde
 
 if [ "$(id -un)" = claude ]; then
   echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1
@@ -66,6 +69,8 @@ sudo bash bootstrap.sh --dry-run   # план без изменений
 sudo bash bootstrap.sh
 ```
 
+ОС определяется по `/etc/os-release`; `--os debian|ubuntu` задаёт её явно. Несовпадение ОС или неподдерживаемая версия останавливают установку. Существующий пользователь `ubuntu` сохраняется; создаётся только `claude`.
+
 Файл кладите туда, где пишете только вы или root (не в `/home/claude`): иначе агент мог бы подменить код, который выполняется от root. Установщик это проверяет и останавливается.
 
 Вопросов нет. Команда, меняющая систему, печатается перед выполнением. Существующий файл, если отличается, показывается diff'ом и заменяется только после «да», старый сохраняется как `.bak-<дата>`.
@@ -74,7 +79,7 @@ sudo bash bootstrap.sh
 
 ## Что делает
 
-1. Проверки: root, Debian 13, все файлы внутри на месте.
+1. Проверки: root, Debian 13 / Ubuntu Server 26.04 LTS, все файлы внутри на месте.
 2. Пользователь `claude` без пароля и без sudo; папка `/home/claude/github`. Сразу после этого проверка, что `claude` не может менять сам `bootstrap.sh`.
 3. Пакеты: `sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client`.
 4. Claude Code из apt-репозитория Anthropic (stable), ключ сверяется с отпечатком `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`.
@@ -105,10 +110,6 @@ sudo bash bootstrap.sh
 
 `memory/` устроена так, чтобы одну память делили несколько VM: общее — в корне и `notes/`, своё у каждой машины — в `hosts/<имя VM>/` (журнал и обмен задачами с Claude в чате). Протокол — `infra/templates/memory/README.md`, он же попадает в `memory/README.md` при подключении пустого репозитория.
 
-## Таймер задач от чата
-
-`claude-watch-exchange` ждёт новую задачу от чата в `exchange/` (или `memory/hosts/<имя VM>/exchange/`). Опрос — обычный `git ls-remote` без участия модели, поэтому токены не тратятся; агент просыпается только когда задача появилась и сообщает о ней владельцу, ничего не выполняя без его слова. Темп: раз в 3 минуты, пока идёт работа; раз в 5 после 15 минут тишины; через 30 минут без ваших сообщений и без коммитов на GitHub таймер сам выключается. Агент запускает его в начале активной работы.
-
 ## Как устроен файл и как меняется эталон
 
 `bootstrap.sh` — это `infra/install.sh`, за ним строка `exit 0`, метка `__INFRA_PAYLOAD__` и архив остальных файлов `infra/` (tar.gz в base64). При запуске установщик находит метку в себе и распаковывает архив во временную папку. Архив — только данные: bash дальше `exit 0` не читает.
@@ -134,7 +135,7 @@ infra/build.sh --check   # убедиться, что bootstrap.sh совпад�
 | `infra/CLAUDE.md` | `/etc/claude-code/CLAUDE.md` | root, 644 |
 | `infra/systemd/claude-agent.service` и `claude-agent.service.d/*.conf` | `/etc/systemd/system/` | root, 644 |
 | `infra/systemd/claude-code-update.{service,timer}` | `/etc/systemd/system/` | root, 644 |
-| `infra/bin/claude-agent-start`, `claude-rc`, `claude-connect-memory`, `claude-watch-exchange` | `/home/claude/.local/bin/` | claude, 755 |
-| `infra/bin/agent-attach` | `/usr/local/bin/agent-attach` (подключение к единственной сессии claude, codex или gemini) | root, 755 |
-| `infra/profile/claude-alias.sh` | `/etc/profile.d/claude-alias.sh` (алиасы `claude`, `codex`, `gemini`, `jarvis` = подключиться к единственным сессиям агентов (jarvis — журнал заглушки); настоящие программы: `command claude` и т.д.) | root, 644 |
+| `infra/bin/claude-agent-start`, `claude-rc`, `claude-connect-memory` | `/home/claude/.local/bin/` | claude, 755 |
+| `infra/bin/agent-attach` | `/usr/local/bin/agent-attach` (подключение к единственной сессии claude, codex или gemini; jarvis — журнал заглушки) | root, 755 |
+| `infra/profile/claude-alias.sh` | `/etc/profile.d/claude-alias.sh` (алиасы `claude`, `codex`, `gemini`, `jarvis`; настоящие программы: `command claude` и т.д.) | root, 644 |
 | `infra/` целиком, кроме `install.sh` и `build.sh` | `/opt/claude-golden/infra/` | root, 755 |

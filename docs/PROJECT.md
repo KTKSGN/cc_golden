@@ -15,7 +15,7 @@ bootstrap.sh                 установщик + встроенный арх�
 infra/                       исходники (из них bootstrap.sh собирается)
   install.sh                   логика установки
   build.sh                     сборка bootstrap.sh и проверка --check
-  CLAUDE.md                    правила агента → /etc/claude-code/CLAUDE.md
+  CLAUDE.md                    единый файл правил агента → /etc/claude-code/CLAUDE.md
   systemd/                     служба агента, обновление Claude Code
   bin/                         скрипты агента
   templates/                   пустые шаблоны памяти (только заголовки)
@@ -30,10 +30,10 @@ docs/PROJECT.md              этот документ
 | `/etc/systemd/system/claude-agent.service` и `.d/{resume,wait-dns,workdir}.conf` | служба: Claude Code с Remote Control в tmux-сессии `claude` | root |
 | `/etc/systemd/system/claude-code-update.{service,timer}` | раз в неделю обновляет только пакет `claude-code` | root |
 | `/opt/claude-golden/infra/` | копия эталона (шаблоны, справка), агент только читает | root |
-| `~claude/.local/bin/` | `claude-agent-start`, `claude-rc`, `claude-connect-memory`, `claude-watch-exchange` | claude |
+| `~claude/.local/bin/` | `claude-agent-start`, `claude-rc`, `claude-connect-memory` | claude |
 | `/usr/local/bin/` | `agent-attach` | root |
 | `/etc/profile.d/` | `claude-alias.sh` (алиасы `claude`, `codex`, `gemini`, `jarvis` → `agent-attach`) | root |
-| `/home/claude/github/` | рабочая папка агента (см. ниже) | claude |
+| `/home/claude/` | рабочая папка агента; проекты, память и эталон в `github/` (см. ниже) | claude |
 
 Рабочая папка агента:
 
@@ -46,11 +46,11 @@ docs/PROJECT.md              этот документ
 
 ## 3. Что делает установщик (по шагам)
 
-1. **Проверки:** root, Debian 13, все файлы на месте.
+1. **Проверки:** root, Debian 13 / Ubuntu Server 26.04 LTS, все файлы на месте.
 2. **Пользователь `claude`:** без пароля, без `sudo`; папка `/home/claude/github`. Сразу после создания проверяется, что `claude` **не может менять сам установщик** (иначе он получил бы root).
 3. **Пакеты:** `sudo curl git gnupg tmux auditd qemu-guest-agent podman uidmap passt openssh-client`.
 4. **Claude Code** из apt-репозитория Anthropic (канал stable). Ключ репозитория сверяется с отпечатком `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`, при несовпадении установка останавливается.
-5. **Правила агента** в `/etc/claude-code/CLAUDE.md`.
+5. **Правила агента** — один файл `infra/CLAUDE.md` → `/etc/claude-code/CLAUDE.md`; установщик проверяет, что он совпадает с эталоном, и убирает лишние файлы правил в рабочей папке.
 6. **Служба, таймер обновления, скрипты.**
 7. **Копия эталона** в `/opt/claude-golden`, рабочая папка: `source/` и ссылка `infra`.
 8. **Включение** auditd, таймера обновления, службы агента.
@@ -116,7 +116,7 @@ p=0; f=0
 chk() { local d=$1; shift; if "$@" </dev/null >/dev/null 2>&1; then printf '[ OK ] %s\n' "$d"; p=$((p+1)); else printf '[FAIL] %s\n' "$d"; f=$((f+1)); fi; }
 . /etc/os-release
 echo "Система: $PRETTY_NAME, ядро $(uname -r), хост $(uname -n)"
-chk "Debian 13" test "$VERSION_ID" = 13
+chk "Debian 13 / Ubuntu Server 26.04 LTS" bash -c 'case "$1:$2" in debian:13|ubuntu:26.04) exit 0;; *) exit 1;; esac' _ "$ID" "$VERSION_ID"
 chk "пользователь claude есть" id claude
 chk "пароль claude заблокирован" bash -c "passwd -S claude | awk '{exit \$2!=\"L\"}'"
 chk "claude НЕ в группе sudo" bash -c "! id -nG claude | tr ' ' '\n' | grep -qx sudo"
@@ -128,11 +128,13 @@ chk "claude-agent.service работает" systemctl is-active claude-agent.ser
 chk "таймер обновления Claude Code включён" systemctl is-enabled claude-code-update.timer
 chk "auditd работает" systemctl is-active auditd
 chk "tmux-сессия claude есть" runuser -u claude -- tmux has-session -t claude
-chk "правила /etc/claude-code/CLAUDE.md на месте" test -s /etc/claude-code/CLAUDE.md
+chk "правила /etc/claude-code/CLAUDE.md совпадают с эталоном" cmp -s /etc/claude-code/CLAUDE.md /opt/claude-golden/infra/CLAUDE.md
+chk "хостовый слой правил /etc/claude-code/host.md есть" test -s /etc/claude-code/host.md
+chk "нет лишних файлов правил в рабочей папке" test ! -e /home/claude/github/CLAUDE.md
 chk "эталон /opt/claude-golden принадлежит root" test "$(stat -c %U /opt/claude-golden)" = root
 chk "агент НЕ может писать в эталон" bash -c "! runuser -u claude -- test -w /opt/claude-golden/infra"
 chk "рабочая папка: source/ и ссылка infra" bash -c "test -d /home/claude/github/source && test \"\$(readlink /home/claude/github/infra)\" = /opt/claude-golden/infra"
-chk "скрипты агента в ~claude/.local/bin" bash -c "for s in claude-agent-start claude-rc claude-connect-memory claude-watch-exchange; do test -x /home/claude/.local/bin/\$s || exit 1; done"
+chk "скрипты агента в ~claude/.local/bin" bash -c "for s in claude-agent-start claude-rc claude-connect-memory; do test -x /home/claude/.local/bin/\$s || exit 1; done"
 chk "subuid/subgid для podman" bash -c "grep -q '^claude:' /etc/subuid && grep -q '^claude:' /etc/subgid"
 chk "DNS: api.anthropic.com резолвится" getent hosts api.anthropic.com
 chk "auditd пишет события claude" bash -c "ausearch -ul \$(id -u claude) -ts today"
@@ -159,16 +161,9 @@ README.md                  протокол (из infra/templates/memory/)
 notes/                     общее для всех VM
 hosts/<имя VM>/
   JOURNAL.md               журнал: что сделано, когда и зачем (новые записи сверху)
-  exchange/
-    from-claude.md         задачи от чата для агента этой VM (пометка «from Cloud»)
-    from-claude-code.md    ответы агента (пометка «from Cloud Code»)
 ```
 
-Агент пишет только в свою папку `hosts/<имя>/` и в `notes/`. Чат (Claude в приложении или на claude.ai) пишет задачи в `from-claude.md` и читает ответы. Сообщать чату путь не нужно: `README.md` в корне памяти начинается с раздела «Для Claude из чата», где описано, куда писать и как выбрать машину. Записи не удаляются и не правятся задним числом; ответ на задачу начинается с `[сделано]` или `[не сделано]`.
-
-### Таймер задач
-
-`claude-watch-exchange` ждёт новую запись `*from-claude.md`. Это обычный `git ls-remote` без участия модели, поэтому **токены не тратятся**; агент просыпается только когда задача появилась. Темп: раз в 3 минуты, пока идёт работа; раз в 5 после 15 минут тишины; через 30 минут без сообщений владельца и без коммитов на GitHub таймер сам выключается. Нашёл задачу — агент сообщает владельцу и **ничего не выполняет без его слова**. Запускается агентом в начале активной работы; в консоли Claude Code он виден как одна фоновая задача.
+Агент пишет только в свою папку `hosts/<имя>/` и в `notes/`.
 
 ## 7. Модель безопасности
 
@@ -209,7 +204,7 @@ hosts/<имя VM>/
 
 ## 11. Ограничения
 
-- Только Debian 13 (проверка в установщике).
+- Debian 13 и Ubuntu Server 26.04 LTS; автоопределение или `--os debian|ubuntu`, несовпадение ОС и версии запрещено.
 - Нет команды удаления: откат через `.bak-*`, `/opt/claude-golden.prev` и снапшот VM.
 - Установщик не перезапускает работающую службу: новые файлы службы вступят в силу после перезапуска или перезагрузки.
 - Вход в аккаунт Claude делается руками и в образ не попадает.
