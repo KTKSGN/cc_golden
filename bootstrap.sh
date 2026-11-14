@@ -400,6 +400,73 @@ setup_golden() {
   fi
 }
 
+# Служба запускает claude в $AGENT_HOME (WorkingDirectory=/home/claude), а подтверждение доверия раньше
+# просили только для $WORKDIR: после перезагрузки консольный claude снова спрашивал «доверять папке?».
+# Записываем доверие для обеих папок; codex и gemini получают доверие к своим домашним папкам.
+trust_agent_dirs() {
+  step "7б. Доверие к рабочим папкам агентов"
+  if [ "$DRY" -eq 1 ]; then
+    note "(dry-run) записал бы доверие: $AGENT_HOME и $WORKDIR (claude), домашние папки codex и gemini"
+    return
+  fi
+  local cj="$AGENT_HOME/.claude.json"
+  if [ -f "$cj" ]; then
+    as_agent python3 -I - "$cj" "$AGENT_HOME" "$WORKDIR" <<'PY' || warn "не удалось записать доверие в $cj"
+import json, os, sys, tempfile
+p, dirs = sys.argv[1], sys.argv[2:]
+d = json.load(open(p))
+pr = d.setdefault("projects", {})
+ch = False
+for x in dirs:
+    e = pr.setdefault(x, {})
+    if not e.get("hasTrustDialogAccepted"):
+        e["hasTrustDialogAccepted"] = True
+        ch = True
+if ch:
+    fd, t = tempfile.mkstemp(dir=os.path.dirname(p))
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f, indent=2)
+    os.chmod(t, 0o600)
+    os.replace(t, p)
+    print("    доверие записано: " + ", ".join(dirs))
+else:
+    print("    claude уже доверяет: " + ", ".join(dirs))
+PY
+  else
+    note "claude ещё не запускался ($cj нет): доверие подтвердить при первом входе в папку $AGENT_HOME"
+  fi
+  # Формат конфигов codex и gemini задан по их документации и на живом экземпляре не проверялся.
+  if id codex >/dev/null 2>&1 && [ -d /home/codex ]; then
+    local cc=/home/codex/.codex/config.toml
+    install -d -m 700 -o codex -g codex /home/codex/.codex
+    if ! grep -qF '[projects."/home/codex"]' "$cc" 2>/dev/null; then
+      printf '\n[projects."/home/codex"]\ntrust_level = "trusted"\n' >>"$cc"
+      chown codex:codex "$cc"; chmod 600 "$cc"
+      note "codex: доверие к /home/codex записано"
+    else
+      note "codex: уже доверяет /home/codex"
+    fi
+  fi
+  if id gemini >/dev/null 2>&1 && [ -d /home/gemini ]; then
+    local gf=/home/gemini/.gemini/trustedFolders.json
+    install -d -m 700 -o gemini -g gemini /home/gemini/.gemini
+    python3 -I - "$gf" /home/gemini <<'PY' && chown gemini:gemini "$gf" && chmod 600 "$gf" || warn "gemini: не удалось записать $gf"
+import json, os, sys
+p, d = sys.argv[1], sys.argv[2]
+try:
+    j = json.load(open(p))
+except Exception:
+    j = {}
+if j.get(d) != "TRUST_FOLDER":
+    j[d] = "TRUST_FOLDER"
+    json.dump(j, open(p, "w"), indent=2)
+    print("    gemini: доверие к " + d + " записано")
+else:
+    print("    gemini: уже доверяет " + d)
+PY
+  fi
+}
+
 enable_services() {
   step "8. Службы"
   run systemctl enable --now auditd
@@ -507,7 +574,8 @@ manual_steps() {
 !!  1. Войти в Claude:
 !!       sudo -u $AGENT_USER tmux attach -t claude
 !!     выбрать тему, войти в аккаунт по ссылке,
-!!     подтвердить доверие к папке $WORKDIR.
+!!     доверие к папкам $AGENT_HOME и $WORKDIR записано установщиком; если Claude
+!!     всё же спросит «доверять папке?» — ответить «Да» (запомнится).
 !!     Выйти из tmux: Ctrl+B, затем D  (НЕ Ctrl+C и НЕ exit).
 !!
 !!  2. Перезагрузить:
@@ -556,6 +624,7 @@ install_rules
 install_exchange
 install_systemd
 setup_golden
+trust_agent_dirs
 enable_services
 self_check
 report
