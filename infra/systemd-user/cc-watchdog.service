@@ -1,0 +1,5 @@
+[Unit]
+Description=cc-watchdog: проверка зависшей сессии Claude Code
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/cc-watchdog
