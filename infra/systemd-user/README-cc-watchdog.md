@@ -9,6 +9,6 @@
 - действие: клавиша Escape в окно `claude:0.0`; не чаще раза в COOLDOWN_S; после MAX_ACTIONS нажатий без ответа — файл `~/.local/state/cc-watchdog/ALERT` и остановка.
 - журнал: `~/.local/state/cc-watchdog/watchdog.log`. Проверка без нажатия: `cc-watchdog --dry-run`.
 
-Установка у агента: скопировать `bin/cc-watchdog` в `~/.local/bin`, шаблон в `~/.config/cc-watchdog/watchdog.conf`, юниты в `~/.config/systemd/user/`, `systemctl --user enable --now cc-watchdog.timer` (нужен linger). Вшивание в install.sh/bootstrap — отдельным шагом, после ревью владельца.
+Установка у агента: скопировать `bin/cc-watchdog` в `~/.local/bin`, шаблон в `~/.config/cc-watchdog/watchdog.conf`, юниты в `~/.config/systemd/user/`, `systemctl --user enable --now cc-watchdog.timer` (нужен linger). Установщик (install.sh) делает это сам.
 
 Перенос в Jarvis: те же четыре роли (heartbeat → проверка → действие → эскалация), цель — не tmux-окно, а процесс/модель, действие — прерывание/перезапуск, эскалация — уведомление.

@@ -9,7 +9,7 @@ CONF="${CC_WD_CONF:-$HOME/.config/cc-watchdog/watchdog.conf}"
 STATE="$HOME/.local/state/cc-watchdog"
 TARGET="claude:0.0"; STALE_S=1800; IDLE_S=600; COOLDOWN_S=1800; MAX_ACTIONS=3
 HEARTBEAT="$STATE/heartbeat"; KEY="Escape"
-SKIP_PATTERN='Do you want to|\(y/n\)|Allow this|Yes, and|Press Enter to'
+SKIP_PATTERN='Do you want to|\(y/n\)|Allow this|Yes, and'
 [ -f "$CONF" ] && . "$CONF"
 dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
 mkdir -p "$STATE"; LOG="$STATE/watchdog.log"; now=$(date +%s)
@@ -41,3 +41,7 @@ if [ "$dry" = 1 ]; then log "dry-run: нажал бы $KEY в $TARGET"; exit 0; 
 tmux send-keys -t "$TARGET" "$KEY"
 echo "$now" > "$STATE/last_action"; echo $((n + 1)) > "$STATE/actions"
 log "нажал $KEY в $TARGET (попытка $((n + 1))/$MAX_ACTIONS)"
+sleep 2
+after=$(tmux capture-pane -p -t "$TARGET" 2>/dev/null | grep -v '^\s*$' | tail -6)
+if [ "$after" = "$tail_txt" ]; then log "через 2с экран не изменился"
+else log "через 2с экран изменился; теперь: $(printf '%s' "$after" | tail -2 | tr '\n' '|' | cut -c1-200)"; fi

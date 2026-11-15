@@ -193,7 +193,8 @@ check_system() {
            systemd/claude-agent.service.d/{resume,workdir,wait-dns,wait-time}.conf \
            systemd/claude-code-update.{service,timer} \
            bin/claude-agent-start bin/claude-rc bin/claude-connect-memory \
-           bin/agent-attach profile/claude-alias.sh \
+           bin/agent-attach bin/cc-watchdog profile/claude-alias.sh \
+           templates/cc-watchdog.conf systemd-user/cc-watchdog.{service,timer} \
            bin/claude-audit-refresh systemd/claude-audit-refresh.{service,path} profile/sshd-agents-deny.conf \
            templates/memory/README.md templates/host/JOURNAL.md; do
     [ -r "$INFRA_DIR/$f" ] || die "нет файла $INFRA_DIR/$f"
@@ -352,6 +353,20 @@ install_systemd() {
   for f in claude-agent-start claude-rc claude-connect-memory; do
     put_file "$INFRA_DIR/bin/$f" "$AGENT_HOME/.local/bin/$f" 755 "$AGENT_USER:$AGENT_USER" || true
   done
+  # Сторож зависшей сессии: скрипт, конфиг (существующий не трогаем) и пользовательские юниты
+  put_file "$INFRA_DIR/bin/cc-watchdog" "$AGENT_HOME/.local/bin/cc-watchdog" 755 "$AGENT_USER:$AGENT_USER" || true
+  agent_dir "$AGENT_HOME/.config" 755
+  agent_dir "$AGENT_HOME/.config/cc-watchdog" 755
+  if [ -e "$AGENT_HOME/.config/cc-watchdog/watchdog.conf" ]; then
+    note "конфиг сторожа уже есть, не трогаю: $AGENT_HOME/.config/cc-watchdog/watchdog.conf"
+  else
+    put_file "$INFRA_DIR/templates/cc-watchdog.conf" "$AGENT_HOME/.config/cc-watchdog/watchdog.conf" 644 "$AGENT_USER:$AGENT_USER" || true
+  fi
+  agent_dir "$AGENT_HOME/.config/systemd" 755
+  agent_dir "$AGENT_HOME/.config/systemd/user" 755
+  for f in cc-watchdog.service cc-watchdog.timer; do
+    put_file "$INFRA_DIR/systemd-user/$f" "$AGENT_HOME/.config/systemd/user/$f" 644 "$AGENT_USER:$AGENT_USER" || true
+  done
   # claude, codex, gemini, jarvis = подключение к единственным сессиям агентов (tmux) для входящих по SSH
   put_file "$INFRA_DIR/bin/agent-attach" /usr/local/bin/agent-attach 755 root:root || true
   put_file "$INFRA_DIR/profile/claude-alias.sh" /etc/profile.d/claude-alias.sh 644 root:root || true
@@ -467,6 +482,26 @@ PY
   fi
 }
 
+# Таймер сторожа живёт в пользовательском менеджере systemd агента (нужен linger).
+# Любая неудача — только предупреждение: установка из-за сторожа не падает.
+enable_watchdog() {
+  local uid rt i
+  run loginctl enable-linger "$AGENT_USER" || warn "linger для $AGENT_USER не включён"
+  [ "$DRY" -eq 0 ] || return 0
+  uid="$(id -u "$AGENT_USER")"; rt="/run/user/$uid"
+  for i in 1 2 3 4 5 6 7 8 9 10; do [ -S "$rt/bus" ] && break; sleep 1; done
+  if [ ! -S "$rt/bus" ]; then
+    warn "пользовательский systemd агента не запущен; включите позже: sudo -u $AGENT_USER XDG_RUNTIME_DIR=$rt systemctl --user enable --now cc-watchdog.timer"
+    return 0
+  fi
+  if runuser -u "$AGENT_USER" -- env HOME="$AGENT_HOME" XDG_RUNTIME_DIR="$rt" DBUS_SESSION_BUS_ADDRESS="unix:path=$rt/bus" \
+       sh -c 'systemctl --user daemon-reload && systemctl --user enable --now cc-watchdog.timer'; then
+    note "cc-watchdog.timer включён"
+  else
+    warn "не удалось включить cc-watchdog.timer; включите позже от имени $AGENT_USER: systemctl --user enable --now cc-watchdog.timer"
+  fi
+}
+
 enable_services() {
   step "8. Службы"
   run systemctl enable --now auditd
@@ -481,6 +516,7 @@ enable_services() {
     fi
   fi
   run systemctl enable --now claude-code-update.timer
+  enable_watchdog
   run systemctl enable claude-agent.service
   if systemctl is-active -q claude-agent.service 2>/dev/null; then
     if [ "${UNITS_CHANGED:-0}" -eq 1 ]; then
