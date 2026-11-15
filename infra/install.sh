@@ -190,7 +190,7 @@ check_system() {
   esac
   note "система: $PRETTY_NAME"
   for f in CLAUDE.md systemd/claude-agent.service \
-           systemd/claude-agent.service.d/{resume,workdir,wait-dns}.conf \
+           systemd/claude-agent.service.d/{resume,workdir,wait-dns,wait-time}.conf \
            systemd/claude-code-update.{service,timer} \
            bin/claude-agent-start bin/claude-rc bin/claude-connect-memory \
            bin/agent-attach profile/claude-alias.sh \
@@ -339,7 +339,7 @@ install_systemd() {
   local d=/etc/systemd/system f
   CHANGED=0
   put_file "$INFRA_DIR/systemd/claude-agent.service" "$d/claude-agent.service" 644 root:root || true
-  for f in resume wait-dns workdir; do
+  for f in resume wait-dns wait-time workdir; do
     put_file "$INFRA_DIR/systemd/claude-agent.service.d/$f.conf" \
       "$d/claude-agent.service.d/$f.conf" 644 root:root || true
   done

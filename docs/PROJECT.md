@@ -27,7 +27,7 @@ docs/PROJECT.md              этот документ
 | Путь | Что | Владелец |
 |---|---|---|
 | `/etc/claude-code/CLAUDE.md` | правила агента (права, граница, порядок работы) | root |
-| `/etc/systemd/system/claude-agent.service` и `.d/{resume,wait-dns,workdir}.conf` | служба: Claude Code с Remote Control в tmux-сессии `claude` | root |
+| `/etc/systemd/system/claude-agent.service` и `.d/{resume,wait-dns,wait-time,workdir}.conf` | служба: Claude Code с Remote Control в tmux-сессии `claude` | root |
 | `/etc/systemd/system/claude-code-update.{service,timer}` | раз в неделю обновляет только пакет `claude-code` | root |
 | `/opt/claude-golden/infra/` | копия эталона (шаблоны, справка), агент только читает | root |
 | `~claude/.local/bin/` | `claude-agent-start`, `claude-rc`, `claude-connect-memory` | claude |
