@@ -333,6 +333,16 @@ install_exchange() {
   run install -d -m 2775 -o root -g agents /home/exchange
   run setfacl -m g:agents:rwx -m d:g:agents:rwx /home/exchange
   note "/home/exchange: root:agents, 2775, default ACL группы agents"
+  # Владелец (тот, кто запустил установку через sudo, например g) пишет в обмен через ACL,
+  # не вступая в группу agents. Переопределение: CC_OWNER_USER=имя.
+  local owner="${CC_OWNER_USER:-${SUDO_USER:-$(logname 2>/dev/null || true)}}"
+  if [ -n "$owner" ] && [ "$owner" != root ] && [ "$owner" != "$AGENT_USER" ] && id "$owner" >/dev/null 2>&1; then
+    run setfacl -R -m "u:$owner:rwX" /home/exchange
+    run find /home/exchange -type d -exec setfacl -d -m "u:$owner:rwX" {} +
+    note "/home/exchange: владелец $owner — чтение и запись через ACL (без группы agents)"
+  else
+    warn "владелец для /home/exchange не определён (установка не через sudo?): задайте CC_OWNER_USER=имя и повторите"
+  fi
 }
 
 install_systemd() {
