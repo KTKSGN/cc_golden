@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Прогрессивный интервал плановых проверок (эталон: устанавливается в ~/.local/bin агента).
+# Без новостей интервал растёт вдвое: 1 ч, 2 ч, 4 ч, … до 24 ч. Новости сбрасывают к 1 ч.
+#   jarvis-plan-backoff quiet   — проверка прошла, новостей нет: следующий интервал вдвое больше
+#   jarvis-plan-backoff news    — есть новое: следующий интервал снова 1 ч
+#   jarvis-plan-backoff status  — текущий интервал и время следующей проверки
+# Пишет состояние в $JARVIS_PLAN_STATE и печатает cron-строку для одноразового CronCreate (recurring=false).
+set -euo pipefail
+
+STATE="${JARVIS_PLAN_STATE:-$HOME/.local/state/jarvis-plan.state}"
+BASE_MIN=60      # базовый интервал: 1 ч
+CAP_MIN=1440     # потолок: сутки
+START_MIN=30     # до прогрессии плановая проверка шла каждые 30 минут
+
+gap=""
+due=""
+if [[ -f $STATE ]]; then
+    gap=$(sed -n 's/^gap=//p' "$STATE")
+    due=$(sed -n 's/^due=//p' "$STATE")
+fi
+
+cmd=${1:-status}
+if [[ $cmd == status ]]; then
+    if [[ -z $due ]]; then
+        echo "состояние не задано ($STATE)"
+        exit 0
+    fi
+    echo "интервал: ${gap} мин; следующая проверка: $(date -d "@$due" '+%F %R %z')"
+    echo "cron для CronCreate: $(date -d "@$due" '+%-M %-H %-d %-m') *"
+    exit 0
+fi
+
+gap=${gap:-$START_MIN}
+case $cmd in
+    quiet)
+        gap=$(( gap * 2 ))
+        (( gap < BASE_MIN )) && gap=$BASE_MIN
+        (( gap > CAP_MIN )) && gap=$CAP_MIN
+        ;;
+    news)
+        gap=$BASE_MIN
+        ;;
+    *)
+        echo "использование: $0 quiet|news|status" >&2
+        exit 2
+        ;;
+esac
+
+due=$(( $(date +%s) + gap * 60 ))
+# Не ставим на :00 и :30 — не даём всем задачам попадать в одну минуту
+if (( 10#$(date -d "@$due" +%M) % 30 == 0 )); then
+    due=$(( due + 180 ))
+fi
+
+mkdir -p "$(dirname "$STATE")"
+printf 'gap=%s\ndue=%s\n' "$gap" "$due" > "$STATE"
+echo "интервал: ${gap} мин; следующая проверка: $(date -d "@$due" '+%F %R %z')"
+echo "cron для CronCreate: $(date -d "@$due" '+%-M %-H %-d %-m') *"

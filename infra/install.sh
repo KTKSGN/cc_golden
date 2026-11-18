@@ -192,7 +192,7 @@ check_system() {
   for f in CLAUDE.md systemd/claude-agent.service \
            systemd/claude-agent.service.d/{resume,workdir,wait-dns,wait-time}.conf \
            systemd/claude-code-update.{service,timer} \
-           bin/claude-agent-start bin/claude-rc bin/claude-connect-memory \
+           bin/claude-agent-start bin/claude-rc bin/claude-connect-memory bin/jarvis-plan-backoff \
            bin/agent-attach profile/claude-alias.sh \
            bin/claude-audit-refresh systemd/claude-audit-refresh.{service,path} profile/sshd-agents-deny.conf \
            templates/memory/README.md templates/host/JOURNAL.md; do
@@ -349,7 +349,7 @@ install_systemd() {
   done
   agent_dir "$AGENT_HOME/.local" 755
   agent_dir "$AGENT_HOME/.local/bin" 755
-  for f in claude-agent-start claude-rc claude-connect-memory; do
+  for f in claude-agent-start claude-rc claude-connect-memory jarvis-plan-backoff; do
     put_file "$INFRA_DIR/bin/$f" "$AGENT_HOME/.local/bin/$f" 755 "$AGENT_USER:$AGENT_USER" || true
   done
   # claude, codex, gemini, jarvis = подключение к единственным сессиям агентов (tmux) для входящих по SSH
