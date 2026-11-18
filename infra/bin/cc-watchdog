@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# cc-watchdog: сторожевой таймер сессии Claude Code (tmux). Только для Claude Code.
+# Признак зависания: heartbeat (его обновляет таймер задач внутри сессии, когда сессия свободна) устарел,
+# а окно tmux давно молчит. Действие: клавиша Escape в окно. После MAX_ACTIONS нажатий без ответа — тревога (файл ALERT).
+# Задуман как образец для будущего watchdog микроядра: heartbeat -> проверка -> действие -> эскалация, всё через конфиг.
+# Использование: cc-watchdog [--dry-run]   (конфиг: ${CC_WD_CONF:-~/.config/cc-watchdog/watchdog.conf})
+set -u
+CONF="${CC_WD_CONF:-$HOME/.config/cc-watchdog/watchdog.conf}"
+STATE="$HOME/.local/state/cc-watchdog"
+TARGET="claude:0.0"; STALE_S=1800; IDLE_S=600; COOLDOWN_S=1800; MAX_ACTIONS=3
+HEARTBEAT="$STATE/heartbeat"; KEY="Escape"
+SKIP_PATTERN='Do you want to|\(y/n\)|Allow this|Yes, and'
+[ -f "$CONF" ] && . "$CONF"
+dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
+mkdir -p "$STATE"; LOG="$STATE/watchdog.log"; now=$(date +%s)
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+
+[ -f "$HEARTBEAT" ] || { touch "$HEARTBEAT"; log "init: heartbeat создан"; exit 0; }
+hb=$(stat -c %Y "$HEARTBEAT"); age=$((now - hb))
+if [ "$age" -lt "$STALE_S" ]; then rm -f "$STATE/actions" "$STATE/ALERT"; exit 0; fi
+
+tmux has-session -t "${TARGET%%:*}" 2>/dev/null || { log "нет tmux-сессии ${TARGET%%:*}: пропуск"; exit 0; }
+act=$(tmux display-message -p -t "$TARGET" '#{window_activity}' 2>/dev/null || echo 0)
+quiet=$((now - act))
+if [ "$quiet" -lt "$IDLE_S" ]; then exit 0; fi   # окно живёт (идёт работа): не трогаем
+
+last=$(cat "$STATE/last_action" 2>/dev/null || echo 0)
+[ $((now - last)) -lt "$COOLDOWN_S" ] && exit 0
+n=$(cat "$STATE/actions" 2>/dev/null || echo 0)
+if [ "$n" -ge "$MAX_ACTIONS" ]; then
+  [ -f "$STATE/ALERT" ] || { echo "$(date '+%F %T') watchdog: $n нажатий $KEY не помогли, нужен человек" > "$STATE/ALERT"; log "ТРЕВОГА: $n нажатий не помогли"; }
+  exit 0
+fi
+
+tail_txt=$(tmux capture-pane -p -t "$TARGET" 2>/dev/null | grep -v '^\s*$' | tail -6)
+if printf '%s' "$tail_txt" | grep -q -E "$SKIP_PATTERN"; then
+  log "пропуск: на экране вопрос владельцу ($(printf '%s' "$tail_txt" | tail -1 | cut -c1-80))"; exit 0
+fi
+log "heartbeat устарел на ${age}с, окно молчит ${quiet}с; экран: $(printf '%s' "$tail_txt" | tail -2 | tr '\n' '|' | cut -c1-200)"
+if [ "$dry" = 1 ]; then log "dry-run: нажал бы $KEY в $TARGET"; exit 0; fi
+tmux send-keys -t "$TARGET" "$KEY"
+echo "$now" > "$STATE/last_action"; echo $((n + 1)) > "$STATE/actions"
+log "нажал $KEY в $TARGET (попытка $((n + 1))/$MAX_ACTIONS)"
+sleep 2
+after=$(tmux capture-pane -p -t "$TARGET" 2>/dev/null | grep -v '^\s*$' | tail -6)
+if [ "$after" = "$tail_txt" ]; then log "через 2с экран не изменился"
+else log "через 2с экран изменился; теперь: $(printf '%s' "$after" | tail -2 | tr '\n' '|' | cut -c1-200)"; fi
