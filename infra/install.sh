@@ -458,7 +458,7 @@ else:
     print("    claude уже доверяет: " + ", ".join(dirs))
 PY
   else
-    note "claude ещё не запускался ($cj нет): доверие подтвердить при первом входе в папку $AGENT_HOME"
+    note "claude ещё не запускался ($cj нет): доверие запишет claude-agent-start при запуске службы"
   fi
   # Формат конфигов codex и gemini задан по их документации и на живом экземпляре не проверялся.
   if id codex >/dev/null 2>&1 && [ -d /home/codex ]; then
