@@ -1,47 +1,73 @@
 #!/usr/bin/env bash
 # Прогрессивный интервал плановых проверок (эталон: устанавливается в ~/.local/bin агента).
-# Без новостей интервал растёт вдвое: 1 ч, 2 ч, 4 ч, … до 24 ч. Новости сбрасывают к 1 ч.
-#   jarvis-plan-backoff quiet   — проверка прошла, новостей нет: следующий интервал вдвое больше
-#   jarvis-plan-backoff news    — есть новое: следующий интервал снова 1 ч
-#   jarvis-plan-backoff status  — текущий интервал и время следующей проверки
-# Пишет состояние в $JARVIS_PLAN_STATE и печатает cron-строку для одноразового CronCreate (recurring=false).
+# Без новостей интервал удваивается: 10, 20, 40, 80 … мин до потолка. Новости сбрасывают к базе.
+#   jarvis-plan-backoff quiet   — проверка прошла, нового нет: следующий интервал вдвое больше
+#   jarvis-plan-backoff news    — есть новое: следующий интервал снова базовый
+#   jarvis-plan-backoff reset   — сброс состояния (счётчик тишины и интервал)
+#   jarvis-plan-backoff status  — текущий интервал, счётчик тишины, время следующей проверки
+# Настройки (переменные окружения сильнее файла ~/.config/plan-check.conf, строки KEY=VALUE):
+#   JARVIS_PLAN_BASE_MIN  базовый интервал, мин (10)
+#   JARVIS_PLAN_CAP_MIN   потолок, мин (1440)
+#   JARVIS_PLAN_START_MIN интервал, от которого удваивается первая тихая проверка (= база)
+#   JARVIS_PLAN_STATE     файл состояния (~/.local/state/jarvis-plan.state)
+# Состояние: gap=, due=, quiet= (старые файлы с gap/due читаются). Печатает cron-строку для CronCreate (recurring=false).
 set -euo pipefail
 
-STATE="${JARVIS_PLAN_STATE:-$HOME/.local/state/jarvis-plan.state}"
-BASE_MIN=60      # базовый интервал: 1 ч
-CAP_MIN=1440     # потолок: сутки
-START_MIN=30     # до прогрессии плановая проверка шла каждые 30 минут
+CONF="${JARVIS_PLAN_CONF:-$HOME/.config/plan-check.conf}"
+e_base=${JARVIS_PLAN_BASE_MIN:-}; e_cap=${JARVIS_PLAN_CAP_MIN:-}
+e_start=${JARVIS_PLAN_START_MIN:-}; e_state=${JARVIS_PLAN_STATE:-}
+if [[ -f $CONF ]]; then
+    # shellcheck disable=SC1090
+    . "$CONF"
+fi
+BASE_MIN=${e_base:-${JARVIS_PLAN_BASE_MIN:-10}}
+CAP_MIN=${e_cap:-${JARVIS_PLAN_CAP_MIN:-1440}}
+START_MIN=${e_start:-${JARVIS_PLAN_START_MIN:-$BASE_MIN}}
+STATE=${e_state:-${JARVIS_PLAN_STATE:-$HOME/.local/state/jarvis-plan.state}}
+for v in BASE_MIN CAP_MIN START_MIN; do
+    [[ ${!v} =~ ^[0-9]+$ ]] && (( ${!v} > 0 )) || { echo "$v должно быть положительным числом" >&2; exit 2; }
+done
 
-gap=""
-due=""
+gap=""; due=""; quiet=""
 if [[ -f $STATE ]]; then
     gap=$(sed -n 's/^gap=//p' "$STATE")
     due=$(sed -n 's/^due=//p' "$STATE")
+    quiet=$(sed -n 's/^quiet=//p' "$STATE")
 fi
+quiet=${quiet:-0}
+
+show() {
+    echo "интервал: ${gap} мин; тишина ${quiet} подряд; следующая проверка: $(date -d "@$due" '+%F %R %z')"
+    echo "cron для CronCreate: $(date -d "@$due" '+%-M %-H %-d %-m') *"
+}
 
 cmd=${1:-status}
-if [[ $cmd == status ]]; then
-    if [[ -z $due ]]; then
-        echo "состояние не задано ($STATE)"
-        exit 0
-    fi
-    echo "интервал: ${gap} мин; следующая проверка: $(date -d "@$due" '+%F %R %z')"
-    echo "cron для CronCreate: $(date -d "@$due" '+%-M %-H %-d %-m') *"
-    exit 0
-fi
-
-gap=${gap:-$START_MIN}
 case $cmd in
+    status)
+        if [[ -z $due ]]; then
+            echo "состояние не задано ($STATE)"
+            exit 0
+        fi
+        show
+        exit 0
+        ;;
+    reset)
+        rm -f "$STATE"
+        echo "состояние сброшено ($STATE)"
+        exit 0
+        ;;
     quiet)
-        gap=$(( gap * 2 ))
+        gap=$(( ${gap:-$START_MIN} * 2 ))
         (( gap < BASE_MIN )) && gap=$BASE_MIN
         (( gap > CAP_MIN )) && gap=$CAP_MIN
+        quiet=$(( quiet + 1 ))
         ;;
     news)
         gap=$BASE_MIN
+        quiet=0
         ;;
     *)
-        echo "использование: $0 quiet|news|status" >&2
+        echo "использование: $0 quiet|news|reset|status" >&2
         exit 2
         ;;
 esac
@@ -53,6 +79,5 @@ if (( 10#$(date -d "@$due" +%M) % 30 == 0 )); then
 fi
 
 mkdir -p "$(dirname "$STATE")"
-printf 'gap=%s\ndue=%s\n' "$gap" "$due" > "$STATE"
-echo "интервал: ${gap} мин; следующая проверка: $(date -d "@$due" '+%F %R %z')"
-echo "cron для CronCreate: $(date -d "@$due" '+%-M %-H %-d %-m') *"
+printf 'gap=%s\ndue=%s\nquiet=%s\n' "$gap" "$due" "$quiet" > "$STATE"
+show

@@ -44,6 +44,15 @@ docs/PROJECT.md              этот документ
 └── source/   репозитории владельца
 ```
 
+### Плановые проверки и сторож
+
+Ставятся в `~claude/.local/bin/`, юниты таймеров: `~claude/.config/systemd/user/` (включаются установщиком, нужен linger).
+
+- `jarvis-plan-backoff quiet|news|reset|status` считает интервал плановых проверок: при тишине удваивает (10, 20, 40, … мин до потолка), при новостях возвращает к базе. Состояние: `~/.local/state/jarvis-plan.state` (`gap`, `due`, `quiet`).
+- `templates/plan-check.md` (виден агенту как `~/github/infra/templates/plan-check.md`) — общая инструкция проверки. Если нового нет, владельцу ничего не пишется.
+- `jarvis-check-tick` + `jarvis-check.{service,timer}` (каждые 30 мин) — сторож сессии: в здоровую сессию ничего не вставляет; при зависании шлёт Escape и промт, кладёт тревогу в папку владельца; если плановая проверка не сработала в срок, просит пересоздать CronCreate.
+- Настройки: `~/.config/plan-check.conf` (шаблон `templates/plan-check.conf`, существующий не перезаписывается): `JARVIS_PLAN_BASE_MIN` (10), `JARVIS_PLAN_CAP_MIN` (1440), `JARVIS_PLAN_INSTRUCTION`, `JARVIS_PLAN_PROMPT`, `JARVIS_TMUX`, `JARVIS_STALL_MIN`, `JARVIS_ALERT_DIR`. Переменные окружения сильнее файла.
+
 ## 3. Что делает установщик (по шагам)
 
 1. **Проверки:** root, Debian 13 / Ubuntu Server 26.04 LTS, все файлы на месте.
