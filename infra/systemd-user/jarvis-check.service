@@ -1,0 +1,6 @@
+[Unit]
+Description=Сторож сессии агента и плановых проверок (промт в сессию только при зависании)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/jarvis-check-tick

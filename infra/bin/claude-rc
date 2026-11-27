@@ -8,7 +8,7 @@ workdir="${2:-$HOME}"
 rc_name="claude-$(uname -n | cut -d. -f1)"
 
 if ! tmux has-session -t "$name" 2>/dev/null; then
-  tmux new-session -d -s "$name" -c "$workdir" "claude --remote-control '$rc_name'; exec bash"
+  tmux new-session -d -s "$name" -c "$workdir" -e "PATH=$HOME/.local/bin:$PATH" "claude --remote-control '$rc_name'; exec bash"
 fi
 
 if [ -n "${TMUX:-}" ]; then

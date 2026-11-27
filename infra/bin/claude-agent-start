@@ -41,5 +41,28 @@ if [ "$dry" -eq 1 ]; then
   exit 0
 fi
 
+# Trust the working folders before every start. The installer can only do this
+# when ~/.claude.json already exists; on a fresh VM it appears at first login,
+# and the "trust this folder?" dialog would block the unattended session.
+python3 -I - "$HOME/.claude.json" "$workdir" "$HOME/github" <<'PY' || echo "claude-agent-start: could not record folder trust" >&2
+import json, os, sys, tempfile
+p, dirs = sys.argv[1], sys.argv[2:]
+d = json.load(open(p)) if os.path.exists(p) else {}
+pr = d.setdefault("projects", {})
+if all(pr.get(x, {}).get("hasTrustDialogAccepted") for x in dirs):
+    sys.exit(0)
+for x in dirs:
+    pr.setdefault(x, {})["hasTrustDialogAccepted"] = True
+fd, t = tempfile.mkstemp(dir=os.path.dirname(p))
+with os.fdopen(fd, "w") as f:
+    json.dump(d, f, indent=2)
+os.chmod(t, 0o600)
+os.replace(t, p)
+PY
+
+# User-level tools (cc-watchdog, jarvis-plan-backoff, claude) live in ~/.local/bin:
+# make sure the session and everything it runs can find them.
+export PATH="$HOME/.local/bin:$PATH"
+
 cd "$workdir"
 exec "${cmd[@]}"

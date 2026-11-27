@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Сторож сессии агента (плановые проверки ведёт внутренний планировщик сессии, CronCreate).
+В здоровую сессию ничего не вставляет. Если сессия доказанно зависла
+(нет записей ассистента дольше STALL_MIN минут И есть необработанная очередь либо прошлый тик не был принят),
+шлёт один Escape (закрыть модальный экран вроде /usage), затем промт, и кладёт тревогу владельцу.
+Во время обычного хода Escape НЕ шлётся: он прерывает работу.
+Настройки: ~/.config/plan-check.conf (KEY=VALUE) или переменные окружения юнита:
+JARVIS_PLAN_INSTRUCTION, JARVIS_PLAN_PROMPT ({instruction} подставляется), JARVIS_TMUX, JARVIS_STALL_MIN, JARVIS_ALERT_DIR.
+Проверка логики без действий: jarvis-check-tick --dry-run [--at 2026-11-15T12:00:00+06:00]"""
+import datetime, glob, json, os, socket, subprocess, sys, time
+
+HOME = os.path.expanduser("~")
+HOST = socket.gethostname().split(".")[0]
+
+
+def load_conf():
+    """Настройки: файл plan-check.conf, поверх него переменные окружения."""
+    cfg = {}
+    try:
+        for line in open(os.environ.get("JARVIS_PLAN_CONF", HOME + "/.config/plan-check.conf")):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                cfg[k.strip()] = v.strip().strip("\"'")
+    except OSError:
+        pass
+    cfg.update({k: v for k, v in os.environ.items() if k.startswith("JARVIS_")})
+    return cfg
+
+
+CFG = load_conf()
+TMUX = CFG.get("JARVIS_TMUX", "claude")
+STALL_MIN = int(CFG.get("JARVIS_STALL_MIN", "20"))
+LOG = HOME + "/.local/state/plan-check-watch.log"
+STATE = HOME + "/.local/state/plan-check-watch.state"
+ALERT_DIR = CFG.get("JARVIS_ALERT_DIR", "/home/exchange/for-owner")
+PLAN_STATE = HOME + "/.local/state/jarvis-plan.state"  # пишет jarvis-plan-backoff: gap=… due=… (epoch)
+INSTRUCTION = CFG.get("JARVIS_PLAN_INSTRUCTION", HOME + "/github/infra/templates/plan-check.md")
+PLAN_PROMPT = CFG.get("JARVIS_PLAN_PROMPT", "Плановая проверка. Выполни инструкцию из {instruction}.").replace("{instruction}", INSTRUCTION)
+PROMPT = PLAN_PROMPT
+CRON_MAX = 75
+CRON_PROMPT = ("Сторож: плановая проверка не запустилась в срок (планировщик сессии пропадает при перезапуске). "
+               "Проверь CronList; если одноразового задания нет, создай его через CronCreate: recurring=false, "
+               "cron-строка из вывода `jarvis-plan-backoff status`, текст промта: «" + PLAN_PROMPT + "». "
+               "Затем выполни плановую проверку.")
+
+
+def now():
+    return datetime.datetime.now().astimezone()
+
+
+def log(msg):
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(f"{now().isoformat(timespec='seconds')} {msg}\n")
+
+
+def session_file():
+    """Журнал сессии, живущей в tmux-сессии агента."""
+    for p in glob.glob(HOME + "/.claude/sessions/*.json"):
+        try:
+            d = json.load(open(p))
+        except Exception:
+            continue
+        if str(d.get("tmux", "")).startswith(TMUX + ":") and os.path.exists(f"/proc/{d.get('pid')}"):
+            for j in glob.glob(HOME + f"/.claude/projects/*/{d['sessionId']}.jsonl"):
+                return j
+    return None
+
+
+def tail_entries(path, at=None, nbytes=6_000_000):
+    out = []
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - nbytes))
+        for line in f.read().decode("utf-8", "ignore").splitlines():
+            try:
+                d = json.loads(line)
+                t = datetime.datetime.fromisoformat(d["timestamp"].replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if at is None or t <= at:
+                out.append((t, d))
+    return out
+
+
+def assess(path, at):
+    """-> (минут с последней записи ассистента, размер необработанной очереди)."""
+    last, pending, cron = None, 0, None
+    for t, d in tail_entries(path, at):
+        ty = d.get("type")
+        if ty == "system" and d.get("subtype") == "scheduled_task_fire":
+            cron = t
+        if ty == "assistant":
+            last, pending = t, 0
+        elif ty == "queue-operation":
+            op = d.get("operation")
+            if op == "enqueue":
+                pending += 1
+            elif op in ("dequeue", "popAll"):
+                pending = 0
+    idle = None if last is None else (at - last).total_seconds() / 60
+    cron_age = None if cron is None else (at - cron).total_seconds() / 60
+    return idle, pending, cron_age
+
+
+def plan_due():
+    """Время следующей плановой проверки (epoch), которое записала последняя проверка; None, если состояния нет."""
+    try:
+        for line in open(PLAN_STATE):
+            if line.startswith("due="):
+                return int(line[4:])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def tmux(*a):
+    return subprocess.run(["tmux", *a], capture_output=True, text=True).returncode == 0
+
+
+def send_prompt():
+    tmux("send-keys", "-t", TMUX, "-l", PROMPT)
+    time.sleep(1)
+    tmux("send-keys", "-t", TMUX, "Enter")
+
+
+def accepted(t0, wait=15):
+    """Промт принят, если за wait секунд он появился в истории ввода сессии."""
+    key = PROMPT[:60]
+    hist = HOME + "/.claude/history.jsonl"
+    end = time.time() + wait
+    while time.time() < end:
+        try:
+            with open(hist, "rb") as f:
+                f.seek(0, 2)
+                f.seek(max(0, f.tell() - 200_000))
+                for line in f.read().decode("utf-8", "ignore").splitlines()[-40:]:
+                    try:
+                        d = json.loads(line)
+                    except Exception:
+                        continue
+                    ts = d.get("timestamp", 0)
+                    ts = ts / 1000 if ts > 1e12 else ts
+                    if ts >= t0 - 2 and key in str(d.get("display", "")):
+                        return True
+        except OSError:
+            pass
+        time.sleep(1)
+    return False
+
+
+def alert(text):
+    name = f"{ALERT_DIR}/ALERT-session-stall-{now().strftime('%Y%m%d-%H%M')}.md"
+    try:
+        with open(name, "w") as f:
+            f.write(f"# Тревога: сессия агента на {HOST} не отвечала\n\n{now().isoformat(timespec='seconds')} (время хоста)\n\n{text}\n")
+    except OSError as e:
+        log(f"alert-file-error {e}")
+
+
+def main():
+    dry = "--dry-run" in sys.argv
+    at = now()
+    if "--at" in sys.argv:
+        at = datetime.datetime.fromisoformat(sys.argv[sys.argv.index("--at") + 1])
+    if not dry and not tmux("has-session", "-t", TMUX):
+        return  # сессии нет: службу агента поднимет systemd
+    path = session_file()
+    idle, pending, cron_age = assess(path, at) if path else (None, 0, None)
+    try:
+        prev_ok = open(STATE).read().strip() != "not-accepted"
+    except OSError:
+        prev_ok = True
+    stalled = idle is not None and idle > STALL_MIN and (pending > 0 or not prev_ok)
+    info = (f"idle_min={'?' if idle is None else round(idle)} pending={pending} prev_ok={int(prev_ok)} "
+            f"cron_age_min={'?' if cron_age is None else round(cron_age)}")
+    # Плановые проверки ведёт внутренний планировщик сессии (CronCreate): строку ввода владельца не трогаем.
+    # Он живёт только в памяти сессии; если не сработал в срок (+CRON_MAX минут) при здоровой сессии - просим пересоздать.
+    # Интервалы прогрессивные (до суток), поэтому сверяем не с возрастом последнего срабатывания, а с записанным временем.
+    due = plan_due()
+    if due is None:
+        late = cron_age is None or cron_age > CRON_MAX
+    else:
+        late = at.timestamp() - due > CRON_MAX * 60
+    cron_lost = (not stalled) and late
+    if dry:
+        print(("STALL" if stalled else ("CRON-LOST" if cron_lost else "ok")), info, "session=" + str(path))
+        return
+    if not stalled and not cron_lost:
+        log(f"watch ok {info}")   # здоровая сессия: ничего не вставляем
+        with open(STATE, "w") as f:
+            f.write("accepted")
+        return
+    if cron_lost:
+        global PROMPT
+        PROMPT = CRON_PROMPT
+    if stalled:
+        log(f"STALL {info}: шлю Escape")
+        tmux("send-keys", "-t", TMUX, "Escape")
+        time.sleep(2)
+    t0 = time.time()
+    send_prompt()
+    ok = accepted(t0, 30)
+    # Во время идущего хода ввод записывается в историю с задержкой (до конца текущего вызова инструмента):
+    # это не отказ. Непринятым считаем промт, только если сессия молчит дольше STALL_MIN.
+    in_turn = idle is not None and idle <= STALL_MIN
+    with open(STATE, "w") as f:
+        f.write("accepted" if (ok or in_turn) else "not-accepted")
+    if stalled:
+        res = "после Escape промт принят, сессия отвечает" if ok else "после Escape промт НЕ принят — нужна ручная проверка терминала сессии"
+        alert(f"Сессия агента не делала ходов {round(idle)} мин, в очереди {pending} необработанных сообщений "
+              f"(вероятно, открыт модальный экран: /usage, /config, /model). Сторож послал Escape; {res}.")
+        log(f"STALL-RESULT accepted={int(ok)}")
+    else:
+        log(f"CRON-LOST просьба пересоздать планировщик accepted={'1' if ok else ('ждёт-хода' if in_turn else '0')} {info}")
+
+
+if __name__ == "__main__":
+    main()
