@@ -193,8 +193,9 @@ check_system() {
            systemd/claude-agent.service.d/{resume,workdir,wait-dns,wait-time}.conf \
            systemd/claude-code-update.{service,timer} \
            bin/claude-agent-start bin/claude-rc bin/claude-connect-memory bin/jarvis-plan-backoff \
-           bin/agent-attach bin/cc-watchdog profile/claude-alias.sh \
+           bin/agent-attach bin/cc-watchdog bin/jarvis-check-tick profile/claude-alias.sh \
            templates/cc-watchdog.conf systemd-user/cc-watchdog.{service,timer} \
+           templates/plan-check.conf templates/plan-check.md systemd-user/jarvis-check.{service,timer} \
            bin/claude-audit-refresh systemd/claude-audit-refresh.{service,path} profile/sshd-agents-deny.conf \
            templates/memory/README.md templates/host/JOURNAL.md; do
     [ -r "$INFRA_DIR/$f" ] || die "нет файла $INFRA_DIR/$f"
@@ -374,7 +375,14 @@ install_systemd() {
   fi
   agent_dir "$AGENT_HOME/.config/systemd" 755
   agent_dir "$AGENT_HOME/.config/systemd/user" 755
-  for f in cc-watchdog.service cc-watchdog.timer; do
+  # Сторож сессии и плановых проверок: скрипт, настройки (существующие не трогаем), юниты
+  put_file "$INFRA_DIR/bin/jarvis-check-tick" "$AGENT_HOME/.local/bin/jarvis-check-tick" 755 "$AGENT_USER:$AGENT_USER" || true
+  if [ -e "$AGENT_HOME/.config/plan-check.conf" ]; then
+    note "настройки плановых проверок уже есть, не трогаю: $AGENT_HOME/.config/plan-check.conf"
+  else
+    put_file "$INFRA_DIR/templates/plan-check.conf" "$AGENT_HOME/.config/plan-check.conf" 644 "$AGENT_USER:$AGENT_USER" || true
+  fi
+  for f in cc-watchdog.service cc-watchdog.timer jarvis-check.service jarvis-check.timer; do
     put_file "$INFRA_DIR/systemd-user/$f" "$AGENT_HOME/.config/systemd/user/$f" 644 "$AGENT_USER:$AGENT_USER" || true
   done
   # claude, codex, gemini, jarvis = подключение к единственным сессиям агентов (tmux) для входящих по SSH
@@ -501,14 +509,14 @@ enable_watchdog() {
   uid="$(id -u "$AGENT_USER")"; rt="/run/user/$uid"
   for i in 1 2 3 4 5 6 7 8 9 10; do [ -S "$rt/bus" ] && break; sleep 1; done
   if [ ! -S "$rt/bus" ]; then
-    warn "пользовательский systemd агента не запущен; включите позже: sudo -u $AGENT_USER XDG_RUNTIME_DIR=$rt systemctl --user enable --now cc-watchdog.timer"
+    warn "пользовательский systemd агента не запущен; включите позже: sudo -u $AGENT_USER XDG_RUNTIME_DIR=$rt systemctl --user enable --now cc-watchdog.timer jarvis-check.timer"
     return 0
   fi
   if runuser -u "$AGENT_USER" -- env HOME="$AGENT_HOME" XDG_RUNTIME_DIR="$rt" DBUS_SESSION_BUS_ADDRESS="unix:path=$rt/bus" \
-       sh -c 'systemctl --user daemon-reload && systemctl --user enable --now cc-watchdog.timer'; then
-    note "cc-watchdog.timer включён"
+       sh -c 'systemctl --user daemon-reload && systemctl --user enable --now cc-watchdog.timer jarvis-check.timer'; then
+    note "cc-watchdog.timer и jarvis-check.timer включены"
   else
-    warn "не удалось включить cc-watchdog.timer; включите позже от имени $AGENT_USER: systemctl --user enable --now cc-watchdog.timer"
+    warn "не удалось включить таймеры сторожа; включите позже от имени $AGENT_USER: systemctl --user enable --now cc-watchdog.timer jarvis-check.timer"
   fi
 }
 

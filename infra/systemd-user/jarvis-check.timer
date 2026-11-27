@@ -1,0 +1,10 @@
+[Unit]
+Description=Каждые 30 минут: сторож сессии агента и плановых проверок
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
