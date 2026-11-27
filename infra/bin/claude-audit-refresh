@@ -6,6 +6,8 @@
 # Правила пересоздаются при установке и при каждом изменении /etc/group (claude-audit-refresh.path).
 set -euo pipefail
 RULES=/etc/audit/rules.d/50-agents.rules
+# список системных вызовов через запятую: только те, что есть на этой архитектуре (ausyscall из auditd)
+sysc() { local out="" c; for c in "$@"; do ausyscall "$c" --exact >/dev/null 2>&1 && out="${out:+$out,}$c"; done; echo "$out"; }
 tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
 {
   echo "# Создано claude-audit-refresh: аудит учётных записей группы agents. Не править вручную."
@@ -17,8 +19,9 @@ tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
     echo "# агент $u (uid $uid)"
     echo "-a always,exit -F arch=b64 -S execve -F uid=$uid -k agents-exec"
     if [ "$(uname -m)" = x86_64 ]; then echo "-a always,exit -F arch=b32 -S execve -F uid=$uid -k agents-exec"; fi
-    echo "-a always,exit -F arch=b64 -S unlink,unlinkat,rename,renameat,rmdir -F uid=$uid -k agents-del"
-    echo "-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,lchown,fchownat -F uid=$uid -k agents-perm"
+    # на arm64 и других новых архитектурах нет старых вызовов (unlink, rename, chmod, chown…): берём только известные ядру
+    echo "-a always,exit -F arch=b64 -S $(sysc unlink unlinkat rename renameat renameat2 rmdir) -F uid=$uid -k agents-del"
+    echo "-a always,exit -F arch=b64 -S $(sysc chmod fchmod fchmodat fchmodat2 chown fchown lchown fchownat) -F uid=$uid -k agents-perm"
   done
 } >"$tmp"
 install -o root -g root -m 0640 "$tmp" "$RULES"
