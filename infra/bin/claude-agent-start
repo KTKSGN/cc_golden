@@ -60,5 +60,9 @@ os.chmod(t, 0o600)
 os.replace(t, p)
 PY
 
+# User-level tools (cc-watchdog, jarvis-plan-backoff, claude) live in ~/.local/bin:
+# make sure the session and everything it runs can find them.
+export PATH="$HOME/.local/bin:$PATH"
+
 cd "$workdir"
 exec "${cmd[@]}"
