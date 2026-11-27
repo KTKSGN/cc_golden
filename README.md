@@ -24,7 +24,7 @@ set -euo pipefail
 # CC_GOLDEN_REPO=ЛОГИН/РЕПО bash ~/deploy.sh
 REPO=${CC_GOLDEN_REPO:-KTKSGN/cc_golden}
 URL=https://raw.githubusercontent.com/$REPO/main/bootstrap.sh
-SHA=fea9734f7641e88fc1bcf88e6b57166a3a44704b514c31c9d9280d87d0970b60
+SHA=69de114bdc39228ba2301ec97a0c6e1c9334b81f23f16cd13fff226b8008270a
 
 if [ "$(id -un)" = claude ]; then
   echo "Не запускайте под пользователем claude: это пользователь агента."; exit 1
