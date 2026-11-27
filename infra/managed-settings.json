@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(~/.ssh/**)",
+      "Read(//home/*/.ssh/**)",
+      "Read(//root/**)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Bash(curl * | bash*)",
+      "Bash(curl * | sh*)",
+      "Bash(wget * | bash*)",
+      "Bash(wget * | sh*)"
+    ]
+  }
+}
