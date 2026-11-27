@@ -197,6 +197,7 @@ check_system() {
            templates/cc-watchdog.conf systemd-user/cc-watchdog.{service,timer} \
            templates/plan-check.conf templates/plan-check.md systemd-user/jarvis-check.{service,timer} \
            bin/claude-audit-refresh systemd/claude-audit-refresh.{service,path} profile/sshd-agents-deny.conf \
+           managed-settings.json agents/silent-failure-hunter.md agents/network-config-reviewer.md \
            templates/memory/README.md templates/host/JOURNAL.md; do
     [ -r "$INFRA_DIR/$f" ] || die "нет файла $INFRA_DIR/$f"
   done
@@ -316,6 +317,15 @@ install_rules() {
   put_file "$INFRA_DIR/CLAUDE.md" /etc/claude-code/CLAUDE.md 644 root:root || true
   # Хостовый слой правил: создаётся один раз, дальше его ведёт владелец от root
   [ -e /etc/claude-code/host.md ] || put_file "$INFRA_DIR/templates/host/CLAUDE.md" /etc/claude-code/host.md 644 root:root || true
+  # Запреты для всех сессий на машине (чтение ключей, .env, «curl | bash»); агент их не снимет
+  put_file "$INFRA_DIR/managed-settings.json" /etc/claude-code/managed-settings.json 644 root:root || true
+  # Субагенты эталона: в домашней папке агента, это только промпты, root их не исполняет
+  agent_dir "$AGENT_HOME/.claude" 775
+  agent_dir "$AGENT_HOME/.claude/agents" 755
+  local a
+  for a in silent-failure-hunter network-config-reviewer; do
+    put_file "$INFRA_DIR/agents/$a.md" "$AGENT_HOME/.claude/agents/$a.md" 644 "$AGENT_USER:$AGENT_USER" || true
+  done
   # Единственный файл правил: старые дополнительные CLAUDE.md в рабочей папке убираем,
   # иначе агент получит второй, расходящийся источник правил.
   run rm -f "$AGENT_HOME/github/CLAUDE.md"
